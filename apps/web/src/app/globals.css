@@ -1,0 +1,121 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  @apply bg-ink-950 text-slate-100 antialiased;
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(45,212,191,0.08), transparent 60%),
+    radial-gradient(ellipse 70% 50% at 100% 100%, rgba(244,198,106,0.06), transparent 60%),
+    linear-gradient(180deg, #070b14 0%, #0b1220 100%);
+  background-attachment: fixed;
+}
+
+html[dir="rtl"] body { font-family: "IBM Plex Sans Arabic", "Noto Sans Arabic", system-ui, sans-serif; }
+
+/* Subtle dotted-grid texture */
+body::before {
+  content: "";
+  position: fixed; inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+  background-size: 32px 32px;
+  pointer-events: none;
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+  z-index: 0;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(148,163,184,0.18);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,0.32); background-clip: padding-box; }
+
+/* Glass card */
+.glass {
+  @apply bg-ink-900/60 backdrop-blur-xl border border-white/5 rounded-2xl shadow-glass;
+}
+.glass-strong {
+  @apply bg-ink-800/70 backdrop-blur-xl border border-white/10 rounded-2xl shadow-glass;
+}
+
+.btn {
+  @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all;
+}
+.btn-primary {
+  @apply btn bg-signal-500 hover:bg-signal-400 text-ink-950 shadow-glow;
+}
+.btn-ghost {
+  @apply btn bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10;
+}
+.btn-danger {
+  @apply btn bg-danger/90 hover:bg-danger text-white;
+}
+
+.input {
+  @apply w-full bg-ink-900/70 border border-white/10 rounded-xl px-4 py-2.5 text-sm
+         placeholder:text-slate-500 focus:outline-none focus:border-signal-400/50
+         focus:ring-2 focus:ring-signal-400/20;
+}
+
+.kpi-tile {
+  @apply glass p-5 relative overflow-hidden;
+}
+.kpi-tile::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: radial-gradient(circle at 100% 0%, rgba(45,212,191,0.10), transparent 60%);
+  pointer-events: none;
+}
+
+.shimmer {
+  background: linear-gradient(90deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.10) 50%, rgba(255,255,255,0.04) 100%);
+  background-size: 800px 100%;
+  @apply animate-shimmer;
+}
+
+/* Phase pill (planning / specialist / synthesis) */
+.phase-pill {
+  @apply inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium border;
+}
+.phase-pill.active { @apply bg-signal-500/15 border-signal-400/40 text-signal-200; }
+.phase-pill.done   { @apply bg-emerald-500/10 border-emerald-400/30 text-emerald-200; }
+.phase-pill.idle   { @apply bg-white/5 border-white/10 text-slate-400; }
+
+/* Markdown-ish prose for agent answers */
+.prose-cfo p { @apply leading-relaxed; }
+.prose-cfo strong { @apply text-signal-200; }
+.prose-cfo code { @apply bg-white/5 border border-white/10 px-1.5 py-0.5 rounded text-xs font-mono; }
+.prose-cfo em { @apply text-slate-400 not-italic; }
+
+/* Citation pills */
+.citation {
+  @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono
+         bg-gold/10 border border-gold/30 text-gold-400;
+}
+
+/* Tool-use indicator */
+.tool-stream {
+  @apply flex items-center gap-2 text-xs text-signal-200/90 font-mono;
+}
+.tool-stream::before {
+  content: "";
+  width: 6px; height: 6px; border-radius: 999px;
+  background: theme(colors.signal.400);
+  box-shadow: 0 0 0 4px rgba(45,212,191,0.18);
+  @apply animate-pulse-soft;
+}

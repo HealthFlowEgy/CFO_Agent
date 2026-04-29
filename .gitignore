@@ -1,0 +1,36 @@
+# Env / secrets
+.env
+.env.local
+.env.*.local
+*.pem
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / Next
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Local data
+data/local/
+*.sqlite
+*.db
+*.db-journal
+
+# Logs
+*.log
