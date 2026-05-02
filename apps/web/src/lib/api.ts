@@ -4,7 +4,10 @@ export type Tenant = {
   id: string; name: string; name_ar?: string; currency: string; plan: string; role: string;
 };
 
-export type User = { id: string; email: string; name: string; locale: "en" | "ar"; role?: string };
+export type User = {
+  id: string; email: string; name: string; locale: "en" | "ar";
+  role?: string; is_platform_admin?: boolean;
+};
 
 const TOKEN_KEY = "hf_cfo_token";
 const ACTIVE_KEY = "hf_cfo_active_tenant";
@@ -77,6 +80,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ plan_id }),
     });
+  },
+
+  // ----- Super-Admin -----
+  async adminOverview() {
+    return jfetch<any>("/api/admin/overview");
+  },
+  async adminTenants() {
+    return jfetch<{ tenants: any[] }>("/api/admin/tenants");
+  },
+  async adminUsers() {
+    return jfetch<{ users: any[] }>("/api/admin/users");
+  },
+  async adminAudit(limit = 100) {
+    return jfetch<{ events: any[] }>(`/api/admin/audit?limit=${limit}`);
+  },
+  async adminAnomalies() {
+    return jfetch<{ stale_tenants: any[]; tenants_near_budget: any[] }>("/api/admin/anomalies");
   },
 
   async listConversations() {

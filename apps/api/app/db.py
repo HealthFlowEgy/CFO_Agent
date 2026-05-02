@@ -61,7 +61,8 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     name TEXT NOT NULL,
-    locale TEXT DEFAULT 'en'
+    locale TEXT DEFAULT 'en',
+    is_platform_admin BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE IF NOT EXISTS tenant_users (
@@ -148,8 +149,14 @@ CREATE TABLE IF NOT EXISTS audit_log (
 """
 
 
+# Idempotent ALTERs for tables that already exist on older deploys.
+MIGRATIONS = """
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_platform_admin BOOLEAN NOT NULL DEFAULT FALSE;
+"""
+
+
 def init_db() -> None:
-    """Run schema migrations. Waits up to 30s for Postgres to come up."""
+    """Run schema + migrations. Waits up to 30s for Postgres to come up."""
     deadline = time.time() + 30
     last_err: Optional[Exception] = None
     while time.time() < deadline:
@@ -157,6 +164,7 @@ def init_db() -> None:
             with get_db() as conn:
                 # psycopg 3 supports multi-statement execute when no params are passed.
                 conn.execute(SCHEMA)
+                conn.execute(MIGRATIONS)
             return
         except psycopg.OperationalError as e:
             last_err = e

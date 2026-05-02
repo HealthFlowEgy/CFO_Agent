@@ -6,9 +6,10 @@ import { Sparkles, ArrowRight, Stethoscope, ShieldCheck, BarChart3 } from "lucid
 import { api } from "@/lib/api";
 
 const DEMO = [
-  { email: "amr.cfo@healthflow.demo",        name: "Amr Hassan",      role: "CFO @ Cairo + Alex" },
-  { email: "layla.controller@healthflow.demo", name: "Layla Ibrahim", role: "Controller (AR locale)" },
-  { email: "omar.analyst@healthflow.demo",   name: "Omar Nabil",      role: "Analyst @ Alex" },
+  { email: "amr.cfo@healthflow.demo",        name: "Amr Hassan",      role: "CFO @ Cairo + Alex",    pwd: "demo1234" },
+  { email: "layla.controller@healthflow.demo", name: "Layla Ibrahim", role: "Controller (AR locale)", pwd: "demo1234" },
+  { email: "omar.analyst@healthflow.demo",   name: "Omar Nabil",      role: "Analyst @ Alex",        pwd: "demo1234" },
+  { email: "sara.admin@healthflow.demo",     name: "Sara Mostafa",    role: "Platform Super-Admin",  pwd: "admin1234" },
 ];
 
 export default function LoginPage() {
@@ -106,21 +107,24 @@ export default function LoginPage() {
           </div>
 
           <div className="mt-6 glass p-4">
-            <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-2">Demo accounts (password: demo1234)</div>
+            <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-2">Demo accounts</div>
             <div className="space-y-1">
-              {DEMO.map((d) => (
-                <button
-                  key={d.email}
-                  onClick={() => setEmail(d.email)}
-                  className="w-full text-start px-3 py-2 rounded-lg hover:bg-white/5 transition flex items-center justify-between"
-                >
-                  <span>
-                    <span className="text-sm">{d.name}</span>
-                    <span className="block text-[11px] text-slate-500 font-mono">{d.email}</span>
-                  </span>
-                  <span className="text-[11px] text-signal-300">{d.role}</span>
-                </button>
-              ))}
+              {DEMO.map((d) => {
+                const isAdmin = d.role.toLowerCase().includes("admin");
+                return (
+                  <button
+                    key={d.email}
+                    onClick={() => { setEmail(d.email); setPassword(d.pwd); }}
+                    className="w-full text-start px-3 py-2 rounded-lg hover:bg-white/5 transition flex items-center justify-between"
+                  >
+                    <span>
+                      <span className="text-sm">{d.name}</span>
+                      <span className="block text-[11px] text-slate-500 font-mono">{d.email} · {d.pwd}</span>
+                    </span>
+                    <span className={`text-[11px] ${isAdmin ? "text-violet-300" : "text-signal-300"}`}>{d.role}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>

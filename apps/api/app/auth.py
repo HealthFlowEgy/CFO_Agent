@@ -17,6 +17,7 @@ class Session(BaseModel):
     email: str
     name: str
     locale: str
+    is_platform_admin: bool = False
 
     @property
     def pseudonymous_user_id(self) -> str:
@@ -69,7 +70,7 @@ async def current_session(
     tenant_id = x_tenant_id or payload["tenant_id"]
     with get_db() as conn:
         row = conn.execute(
-            """SELECT u.email, u.name, u.locale, tu.role
+            """SELECT u.email, u.name, u.locale, u.is_platform_admin, tu.role
                FROM users u
                JOIN tenant_users tu ON tu.user_id = u.id
                WHERE u.id = %s AND tu.tenant_id = %s""",
@@ -84,4 +85,37 @@ async def current_session(
         email=row["email"],
         name=row["name"],
         locale=row["locale"],
+        is_platform_admin=bool(row["is_platform_admin"]),
+    )
+
+
+async def platform_admin_session(
+    authorization: Optional[str] = Header(default=None),
+) -> Session:
+    """Auth dependency for /api/admin/* — requires is_platform_admin=true.
+
+    Distinct from current_session: does not require an X-Tenant-Id header
+    (admins are not tenant-scoped) and bypasses tenant_users membership.
+    """
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer token")
+    token = authorization.split(" ", 1)[1]
+    payload = decode_token(token)
+    user_id = payload["sub"]
+    with get_db() as conn:
+        row = conn.execute(
+            """SELECT email, name, locale, is_platform_admin
+               FROM users WHERE id = %s""",
+            (user_id,),
+        ).fetchone()
+    if not row or not row["is_platform_admin"]:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "platform admin role required")
+    return Session(
+        user_id=user_id,
+        tenant_id="_platform",
+        role="platform.admin",
+        email=row["email"],
+        name=row["name"],
+        locale=row["locale"],
+        is_platform_admin=True,
     )

@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   LayoutDashboard, MessagesSquare, BookMarked, Settings as SettingsIcon,
-  LogOut, ChevronsUpDown, Sparkles, Hospital, Globe2, Receipt,
+  LogOut, ChevronsUpDown, Sparkles, Hospital, Globe2, Receipt, Crown,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -164,6 +164,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
           {/* Footer */}
           <div className="p-3 border-t border-white/5 space-y-2">
+            {user.is_platform_admin && (
+              <Link
+                href="/admin"
+                className="w-full inline-flex items-center justify-between gap-2 px-4 py-2 rounded-xl text-sm font-medium border bg-violet-500/10 border-violet-400/30 text-violet-200 hover:bg-violet-500/20 transition"
+              >
+                <span className="flex items-center gap-2"><Crown className="w-4 h-4" /> Super-Admin</span>
+                <span className="text-[10px] uppercase tracking-wider text-violet-300/80">platform</span>
+              </Link>
+            )}
             <button onClick={toggleLocale} className="w-full btn-ghost justify-between">
               <span className="flex items-center gap-2"><Globe2 className="w-4 h-4" /> {locale === "en" ? "العربية" : "English"}</span>
               <span className="text-xs text-slate-500">{locale.toUpperCase()}</span>

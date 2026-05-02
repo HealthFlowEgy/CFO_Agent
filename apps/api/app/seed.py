@@ -31,7 +31,7 @@ TENANTS = [
 
 
 USERS = [
-    # email, name, password, locale, tenants_with_role
+    # email, name, password, locale, memberships, is_platform_admin
     {
         "id": "usr_amr",
         "email": "amr.cfo@healthflow.demo",
@@ -39,6 +39,7 @@ USERS = [
         "password": "demo1234",
         "locale": "en",
         "memberships": [("tnt_cairo", "cfo"), ("tnt_alex", "cfo")],
+        "is_platform_admin": False,
     },
     {
         "id": "usr_layla",
@@ -47,6 +48,7 @@ USERS = [
         "password": "demo1234",
         "locale": "ar",
         "memberships": [("tnt_cairo", "controller")],
+        "is_platform_admin": False,
     },
     {
         "id": "usr_omar",
@@ -55,6 +57,19 @@ USERS = [
         "password": "demo1234",
         "locale": "en",
         "memberships": [("tnt_alex", "analyst")],
+        "is_platform_admin": False,
+    },
+    # HealthFlow platform staff — has cross-tenant visibility via /admin.
+    {
+        "id": "usr_sara",
+        "email": "sara.admin@healthflow.demo",
+        "name": "Sara Mostafa",
+        "password": "admin1234",
+        "locale": "en",
+        # Platform admin can also have tenant memberships for impersonation; we
+        # give Sara read-only access to both demo tenants for support drill-downs.
+        "memberships": [("tnt_cairo", "auditor.internal"), ("tnt_alex", "auditor.internal")],
+        "is_platform_admin": True,
     },
 ]
 
@@ -215,8 +230,17 @@ def seed_demo_data() -> None:
             existing = conn.execute("SELECT id FROM users WHERE id = %s", (u["id"],)).fetchone()
             if not existing:
                 conn.execute(
-                    "INSERT INTO users (id, email, password_hash, name, locale) VALUES (%s, %s, %s, %s, %s)",
-                    (u["id"], u["email"].lower(), hash_password(u["password"]), u["name"], u["locale"]),
+                    """INSERT INTO users
+                       (id, email, password_hash, name, locale, is_platform_admin)
+                       VALUES (%s, %s, %s, %s, %s, %s)""",
+                    (u["id"], u["email"].lower(), hash_password(u["password"]),
+                     u["name"], u["locale"], u.get("is_platform_admin", False)),
+                )
+            else:
+                # Keep the flag in sync if seed flips it on existing demo users.
+                conn.execute(
+                    "UPDATE users SET is_platform_admin = %s WHERE id = %s",
+                    (u.get("is_platform_admin", False), u["id"]),
                 )
             for tid, role in u["memberships"]:
                 conn.execute(

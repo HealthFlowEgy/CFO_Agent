@@ -13,6 +13,7 @@ from app.auth import (
     Session,
     current_session,
     issue_token,
+    platform_admin_session,
     verify_password,
 )
 from app.config import settings
@@ -67,7 +68,7 @@ class LoginOut(BaseModel):
 def login(payload: LoginIn) -> LoginOut:
     with get_db() as conn:
         u = conn.execute(
-            "SELECT id, email, name, locale, password_hash FROM users WHERE email = %s",
+            "SELECT id, email, name, locale, password_hash, is_platform_admin FROM users WHERE email = %s",
             (payload.email.lower(),),
         ).fetchone()
         if not u or not verify_password(payload.password, u["password_hash"]):
@@ -93,7 +94,8 @@ def login(payload: LoginIn) -> LoginOut:
                  tenant_id=active, user_id=u["id"])
     return LoginOut(
         access_token=token,
-        user={"id": u["id"], "email": u["email"], "name": u["name"], "locale": u["locale"]},
+        user={"id": u["id"], "email": u["email"], "name": u["name"], "locale": u["locale"],
+              "is_platform_admin": bool(u["is_platform_admin"])},
         tenants=tenants,
         active_tenant_id=active,
     )
@@ -110,7 +112,8 @@ def me(session: Session = Depends(current_session)) -> dict:
         ).fetchall()]
     return {
         "user": {"id": session.user_id, "email": session.email, "name": session.name,
-                 "locale": session.locale, "role": session.role},
+                 "locale": session.locale, "role": session.role,
+                 "is_platform_admin": session.is_platform_admin},
         "active_tenant_id": session.tenant_id,
         "tenants": tenants,
     }
@@ -130,6 +133,207 @@ def switch_tenant(body: dict, session: Session = Depends(current_session)) -> di
             raise HTTPException(403, "no access to tenant")
     token = issue_token(session.user_id, new_tid, row["role"])
     return {"access_token": token, "active_tenant_id": new_tid, "role": row["role"]}
+
+
+# ----------------- Platform Super-Admin -----------------
+#
+# All endpoints in this block require is_platform_admin = TRUE on the user.
+# These bypass tenant scoping by design — they exist to operate the platform.
+
+def _aggregate_usage_from_audit(rows: list[dict]) -> dict:
+    """Reduce audit_log payload_json rows into agent runs / tools / tokens."""
+    runs = tools = total_tokens = 0
+    for r in rows:
+        try:
+            p = json.loads(r["payload_json"])
+        except Exception:
+            continue
+        runs += 1
+        for sp in p.get("specialists", []):
+            tools += len(sp.get("tools", []))
+            usage = sp.get("usage") or {}
+            total_tokens += int(usage.get("input_tokens", 0)) + int(usage.get("output_tokens", 0))
+        syn = p.get("synthesis_usage") or {}
+        total_tokens += int(syn.get("input_tokens", 0)) + int(syn.get("output_tokens", 0))
+    return {"runs": runs, "tools": tools, "tokens": total_tokens}
+
+
+@app.get("/api/admin/overview")
+def admin_overview(_: Session = Depends(platform_admin_session)) -> dict:
+    """System-wide KPIs for the super-admin dashboard."""
+    with get_db() as conn:
+        total_tenants = conn.execute("SELECT COUNT(*) AS n FROM tenants").fetchone()["n"]
+        total_users = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
+        total_conversations = conn.execute("SELECT COUNT(*) AS n FROM conversations").fetchone()["n"]
+        plan_dist_rows = conn.execute(
+            "SELECT plan, COUNT(*) AS n FROM tenants GROUP BY plan"
+        ).fetchall()
+        # 30-day audit aggregates
+        audit_rows = conn.execute(
+            """SELECT payload_json FROM audit_log
+               WHERE event = 'agent.run' AND created_at >= NOW() - INTERVAL '30 days'"""
+        ).fetchall()
+        # Today's audit aggregates
+        today_rows = conn.execute(
+            """SELECT payload_json FROM audit_log
+               WHERE event = 'agent.run' AND created_at >= NOW() - INTERVAL '24 hours'"""
+        ).fetchall()
+        # Recent logins (24h)
+        logins_24h = conn.execute(
+            """SELECT COUNT(*) AS n FROM audit_log
+               WHERE event = 'auth.login' AND created_at >= NOW() - INTERVAL '24 hours'"""
+        ).fetchone()["n"]
+
+    plan_dist = {r["plan"] or "unknown": r["n"] for r in plan_dist_rows}
+    mrr = sum(PLANS.get(p, {}).get("price_usd_per_month", 0) * n for p, n in plan_dist.items())
+
+    usage_30d = _aggregate_usage_from_audit(audit_rows)
+    usage_24h = _aggregate_usage_from_audit(today_rows)
+
+    return {
+        "tenants_total": total_tenants,
+        "users_total": total_users,
+        "conversations_total": total_conversations,
+        "logins_24h": logins_24h,
+        "plan_distribution": plan_dist,
+        "mrr_usd": mrr,
+        "usage_30d": usage_30d,
+        "usage_24h": usage_24h,
+        "llm_mode": settings.llm_mode,
+    }
+
+
+@app.get("/api/admin/tenants")
+def admin_tenants(_: Session = Depends(platform_admin_session)) -> dict:
+    """Per-tenant metrics: plan, user count, conversations, last activity, MTD tokens."""
+    with get_db() as conn:
+        tenants = conn.execute(
+            """SELECT t.id, t.name, t.name_ar, t.currency, t.plan, t.created_at,
+                      COUNT(DISTINCT tu.user_id) AS user_count
+               FROM tenants t
+               LEFT JOIN tenant_users tu ON tu.tenant_id = t.id
+               GROUP BY t.id, t.name, t.name_ar, t.currency, t.plan, t.created_at
+               ORDER BY t.name""",
+        ).fetchall()
+        out = []
+        for t in tenants:
+            convs = conn.execute(
+                "SELECT COUNT(*) AS n, MAX(created_at) AS last FROM conversations WHERE tenant_id = %s",
+                (t["id"],),
+            ).fetchone()
+            audit_mtd = conn.execute(
+                """SELECT payload_json FROM audit_log
+                   WHERE tenant_id = %s AND event = 'agent.run'
+                     AND to_char(created_at, 'YYYY-MM') = to_char(NOW(), 'YYYY-MM')""",
+                (t["id"],),
+            ).fetchall()
+            usage = _aggregate_usage_from_audit(audit_mtd)
+            plan = PLANS.get((t["plan"] or "").lower(), {})
+            out.append({
+                "id": t["id"],
+                "name": t["name"],
+                "name_ar": t["name_ar"],
+                "currency": t["currency"],
+                "plan": t["plan"],
+                "plan_price_usd": plan.get("price_usd_per_month", 0),
+                "user_count": int(t["user_count"] or 0),
+                "conversation_count": int(convs["n"] or 0),
+                "last_activity": convs["last"].isoformat() if convs["last"] else None,
+                "created_at": t["created_at"].isoformat() if t["created_at"] else None,
+                "tokens_mtd": usage["tokens"],
+                "agent_runs_mtd": usage["runs"],
+            })
+    return {"tenants": out}
+
+
+@app.get("/api/admin/users")
+def admin_users(_: Session = Depends(platform_admin_session)) -> dict:
+    """Cross-tenant user list with memberships."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT u.id, u.email, u.name, u.locale, u.is_platform_admin,
+                      COALESCE(json_agg(json_build_object(
+                          'tenant_id', tu.tenant_id, 'role', tu.role
+                      )) FILTER (WHERE tu.tenant_id IS NOT NULL), '[]') AS memberships
+               FROM users u
+               LEFT JOIN tenant_users tu ON tu.user_id = u.id
+               GROUP BY u.id, u.email, u.name, u.locale, u.is_platform_admin
+               ORDER BY u.is_platform_admin DESC, u.name""",
+        ).fetchall()
+    return {"users": [dict(r) for r in rows]}
+
+
+@app.get("/api/admin/audit")
+def admin_audit(
+    limit: int = 100,
+    _: Session = Depends(platform_admin_session),
+) -> dict:
+    """Recent platform events across all tenants."""
+    limit = max(1, min(limit, 500))
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT id, tenant_id, user_id, event, created_at, hash
+               FROM audit_log
+               ORDER BY id DESC
+               LIMIT %s""",
+            (limit,),
+        ).fetchall()
+    return {
+        "events": [
+            {
+                "id": r["id"],
+                "tenant_id": r["tenant_id"],
+                "user_id": r["user_id"],
+                "event": r["event"],
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                "hash_prefix": (r["hash"] or "")[:12],
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.get("/api/admin/anomalies")
+def admin_anomalies(_: Session = Depends(platform_admin_session)) -> dict:
+    """Lightweight signal panel: tenants near token-budget cap, failed logins, unused tenants."""
+    with get_db() as conn:
+        # Failed logins in last 24h (we don't currently log failures separately;
+        # this surface is reserved — return 0 today, list is here for the dashboard schema).
+        # Tenants with stale activity (no conversation in 14 days)
+        stale = conn.execute(
+            """SELECT t.id, t.name, MAX(c.created_at) AS last
+               FROM tenants t
+               LEFT JOIN conversations c ON c.tenant_id = t.id
+               GROUP BY t.id, t.name
+               HAVING MAX(c.created_at) IS NULL OR MAX(c.created_at) < NOW() - INTERVAL '14 days'""",
+        ).fetchall()
+        over_budget: list[dict] = []
+        for t in conn.execute("SELECT id, name, plan FROM tenants").fetchall():
+            audit_mtd = conn.execute(
+                """SELECT payload_json FROM audit_log
+                   WHERE tenant_id = %s AND event = 'agent.run'
+                     AND to_char(created_at, 'YYYY-MM') = to_char(NOW(), 'YYYY-MM')""",
+                (t["id"],),
+            ).fetchall()
+            usage = _aggregate_usage_from_audit(audit_mtd)
+            plan = PLANS.get((t["plan"] or "").lower(), {})
+            budget = plan.get("monthly_token_budget", 0) or 1
+            pct = usage["tokens"] / budget * 100
+            if pct >= 70:
+                over_budget.append({
+                    "tenant_id": t["id"],
+                    "tenant_name": t["name"],
+                    "tokens_pct": round(pct, 1),
+                    "plan": t["plan"],
+                })
+    return {
+        "stale_tenants": [
+            {"tenant_id": s["id"], "tenant_name": s["name"],
+             "last_activity": s["last"].isoformat() if s["last"] else None}
+            for s in stale
+        ],
+        "tenants_near_budget": over_budget,
+    }
 
 
 # ----------------- KPIs / Dashboard -----------------
