@@ -1,29 +1,49 @@
-import sqlite3
+"""Postgres connection pool + schema bootstrap (replaces V0 SQLite).
+
+The rest of the app uses `with get_db() as conn:` and `conn.execute(sql, params).fetchall()`
+— a shape that works identically against psycopg's connection.
+"""
+from __future__ import annotations
+
+import time
 from contextlib import contextmanager
-from pathlib import Path
+from typing import Optional
+
+import psycopg
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 from app.config import settings
 
 
-def _connect() -> sqlite3.Connection:
-    Path(settings.db_path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(settings.db_path, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+_pool: Optional[ConnectionPool] = None
+
+
+def _get_pool() -> ConnectionPool:
+    global _pool
+    if _pool is None:
+        # Defer-open to avoid raising at import; we wait for the DB to be ready below.
+        _pool = ConnectionPool(
+            conninfo=settings.database_url,
+            min_size=1,
+            max_size=10,
+            kwargs={"row_factory": dict_row, "autocommit": False},
+            open=False,
+        )
+        _pool.open(wait=True, timeout=30)
+    return _pool
 
 
 @contextmanager
 def get_db():
-    conn = _connect()
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    pool = _get_pool()
+    with pool.connection() as conn:
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
 
 SCHEMA = """
@@ -33,7 +53,7 @@ CREATE TABLE IF NOT EXISTS tenants (
     name_ar TEXT,
     currency TEXT DEFAULT 'EGP',
     plan TEXT DEFAULT 'pro',
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -61,11 +81,11 @@ CREATE TABLE IF NOT EXISTS service_lines (
 
 CREATE TABLE IF NOT EXISTS gl_entries (
     tenant_id TEXT NOT NULL,
-    period TEXT NOT NULL,            -- YYYY-MM
+    period TEXT NOT NULL,
     service_line TEXT NOT NULL,
-    revenue REAL NOT NULL DEFAULT 0,
-    direct_cost REAL NOT NULL DEFAULT 0,
-    overhead REAL NOT NULL DEFAULT 0,
+    revenue DOUBLE PRECISION NOT NULL DEFAULT 0,
+    direct_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+    overhead DOUBLE PRECISION NOT NULL DEFAULT 0,
     encounters INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (tenant_id, period, service_line)
 );
@@ -82,11 +102,11 @@ CREATE TABLE IF NOT EXISTS claims_summary (
     tenant_id TEXT NOT NULL,
     period TEXT NOT NULL,
     payer_code TEXT NOT NULL,
-    billed REAL NOT NULL,
-    paid REAL NOT NULL,
-    denied REAL NOT NULL,
-    outstanding REAL NOT NULL,
-    days_in_ar REAL NOT NULL,
+    billed DOUBLE PRECISION NOT NULL,
+    paid DOUBLE PRECISION NOT NULL,
+    denied DOUBLE PRECISION NOT NULL,
+    outstanding DOUBLE PRECISION NOT NULL,
+    days_in_ar DOUBLE PRECISION NOT NULL,
     PRIMARY KEY (tenant_id, period, payer_code)
 );
 
@@ -95,7 +115,7 @@ CREATE TABLE IF NOT EXISTS cash_balances (
     as_of_date TEXT NOT NULL,
     account TEXT NOT NULL,
     currency TEXT DEFAULT 'EGP',
-    balance REAL NOT NULL,
+    balance DOUBLE PRECISION NOT NULL,
     PRIMARY KEY (tenant_id, as_of_date, account)
 );
 
@@ -104,7 +124,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     tenant_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
     title TEXT,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -112,22 +132,33 @@ CREATE TABLE IF NOT EXISTS messages (
     conversation_id TEXT NOT NULL REFERENCES conversations(id),
     role TEXT NOT NULL,
     content_json TEXT NOT NULL,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id BIGSERIAL PRIMARY KEY,
     tenant_id TEXT,
     user_id TEXT,
     event TEXT NOT NULL,
     payload_json TEXT,
     prev_hash TEXT,
     hash TEXT NOT NULL,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 """
 
 
 def init_db() -> None:
-    with get_db() as conn:
-        conn.executescript(SCHEMA)
+    """Run schema migrations. Waits up to 30s for Postgres to come up."""
+    deadline = time.time() + 30
+    last_err: Optional[Exception] = None
+    while time.time() < deadline:
+        try:
+            with get_db() as conn:
+                # psycopg 3 supports multi-statement execute when no params are passed.
+                conn.execute(SCHEMA)
+            return
+        except psycopg.OperationalError as e:
+            last_err = e
+            time.sleep(1.5)
+    raise RuntimeError(f"could not connect to Postgres: {last_err}")

@@ -1,17 +1,36 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cfo_pg
+    environment:
+      POSTGRES_DB: cfo
+      POSTGRES_USER: cfo
+      POSTGRES_PASSWORD: cfo
+    volumes:
+      - cfo_pg:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cfo -d cfo"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
   api:
     build: ./apps/api
     container_name: cfo_api
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me}
-      - DB_PATH=/data/cfo.db
+      - DATABASE_URL=postgresql://cfo:cfo@postgres:5432/cfo
       - CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
       - MODEL_CONDUCTOR=${MODEL_CONDUCTOR:-claude-opus-4-5}
       - MODEL_SPECIALIST=${MODEL_SPECIALIST:-claude-sonnet-4-5}
       - MODEL_HAIKU=${MODEL_HAIKU:-claude-haiku-4-5}
-    volumes:
-      - cfo_data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "8000:8000"
     healthcheck:
@@ -19,14 +38,17 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
-      start_period: 10s
+      start_period: 15s
 
   web:
-    build: ./apps/web
+    build:
+      context: ./apps/web
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
     container_name: cfo_web
     environment:
-      - NEXT_PUBLIC_API_URL=http://api:8000
-      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NODE_ENV=production
     depends_on:
       api:
         condition: service_healthy
@@ -34,4 +56,4 @@ services:
       - "3000:3000"
 
 volumes:
-  cfo_data:
+  cfo_pg:

@@ -6,16 +6,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libffi-dev && rm -rf /var/lib/apt/lists/*
-
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY app ./app
-
-RUN mkdir -p /data
-ENV DB_PATH=/data/cfo.db
 
 EXPOSE 8000
 

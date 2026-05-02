@@ -96,20 +96,25 @@ def _periods(months_back: int) -> list[str]:
 
 def _seed_tenant(conn, tenant: dict, *, scale: float, rng: random.Random) -> None:
     conn.execute(
-        """INSERT OR IGNORE INTO tenants (id, name, name_ar, currency, plan)
-           VALUES (?, ?, ?, ?, ?)""",
+        """INSERT INTO tenants (id, name, name_ar, currency, plan)
+           VALUES (%s, %s, %s, %s, %s)
+           ON CONFLICT (id) DO NOTHING""",
         (tenant["id"], tenant["name"], tenant["name_ar"], tenant["currency"], tenant["plan"]),
     )
 
     for code, name, name_ar in SERVICE_LINES:
         conn.execute(
-            "INSERT OR IGNORE INTO service_lines (tenant_id, code, name, name_ar) VALUES (?, ?, ?, ?)",
+            """INSERT INTO service_lines (tenant_id, code, name, name_ar)
+               VALUES (%s, %s, %s, %s)
+               ON CONFLICT (tenant_id, code) DO NOTHING""",
             (tenant["id"], code, name, name_ar),
         )
 
     for code, name, name_ar in PAYERS:
         conn.execute(
-            "INSERT OR IGNORE INTO payers (tenant_id, code, name, name_ar) VALUES (?, ?, ?, ?)",
+            """INSERT INTO payers (tenant_id, code, name, name_ar)
+               VALUES (%s, %s, %s, %s)
+               ON CONFLICT (tenant_id, code) DO NOTHING""",
             (tenant["id"], code, name, name_ar),
         )
 
@@ -131,9 +136,14 @@ def _seed_tenant(conn, tenant: dict, *, scale: float, rng: random.Random) -> Non
             overhead = rev * rng.uniform(0.18, 0.28)
             encounters = int(rev / rng.uniform(2500, 5500))
             conn.execute(
-                """INSERT OR REPLACE INTO gl_entries
+                """INSERT INTO gl_entries
                    (tenant_id, period, service_line, revenue, direct_cost, overhead, encounters)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (tenant_id, period, service_line) DO UPDATE SET
+                     revenue = EXCLUDED.revenue,
+                     direct_cost = EXCLUDED.direct_cost,
+                     overhead = EXCLUDED.overhead,
+                     encounters = EXCLUDED.encounters""",
                 (tenant["id"], period, code, rev, direct_cost, overhead, encounters),
             )
 
@@ -147,7 +157,7 @@ def _seed_tenant(conn, tenant: dict, *, scale: float, rng: random.Random) -> Non
         gl_total = sum(
             (r["revenue"] or 0)
             for r in conn.execute(
-                "SELECT revenue FROM gl_entries WHERE tenant_id = ? AND period = ?",
+                "SELECT revenue FROM gl_entries WHERE tenant_id = %s AND period = %s",
                 (tenant["id"], period),
             ).fetchall()
         )
@@ -159,9 +169,15 @@ def _seed_tenant(conn, tenant: dict, *, scale: float, rng: random.Random) -> Non
             outstanding = billed - denied - paid
             dso = payer_dso[code] * rng.uniform(0.9, 1.1)
             conn.execute(
-                """INSERT OR REPLACE INTO claims_summary
+                """INSERT INTO claims_summary
                    (tenant_id, period, payer_code, billed, paid, denied, outstanding, days_in_ar)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (tenant_id, period, payer_code) DO UPDATE SET
+                     billed = EXCLUDED.billed,
+                     paid = EXCLUDED.paid,
+                     denied = EXCLUDED.denied,
+                     outstanding = EXCLUDED.outstanding,
+                     days_in_ar = EXCLUDED.days_in_ar""",
                 (tenant["id"], period, code, billed, paid, denied, outstanding, dso),
             )
 
@@ -176,9 +192,12 @@ def _seed_tenant(conn, tenant: dict, *, scale: float, rng: random.Random) -> Non
         for acct, ccy in accounts:
             b = base_balances[acct] * scale * (1.0 + rng.uniform(-0.05, 0.05) - w * 0.005)
             conn.execute(
-                """INSERT OR REPLACE INTO cash_balances
+                """INSERT INTO cash_balances
                    (tenant_id, as_of_date, account, currency, balance)
-                   VALUES (?, ?, ?, ?, ?)""",
+                   VALUES (%s, %s, %s, %s, %s)
+                   ON CONFLICT (tenant_id, as_of_date, account) DO UPDATE SET
+                     currency = EXCLUDED.currency,
+                     balance = EXCLUDED.balance""",
                 (tenant["id"], d.isoformat(), acct, ccy, b),
             )
 
@@ -193,14 +212,16 @@ def seed_demo_data() -> None:
 
         # users + memberships
         for u in USERS:
-            existing = conn.execute("SELECT id FROM users WHERE id = ?", (u["id"],)).fetchone()
+            existing = conn.execute("SELECT id FROM users WHERE id = %s", (u["id"],)).fetchone()
             if not existing:
                 conn.execute(
-                    "INSERT INTO users (id, email, password_hash, name, locale) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO users (id, email, password_hash, name, locale) VALUES (%s, %s, %s, %s, %s)",
                     (u["id"], u["email"].lower(), hash_password(u["password"]), u["name"], u["locale"]),
                 )
             for tid, role in u["memberships"]:
                 conn.execute(
-                    "INSERT OR IGNORE INTO tenant_users (tenant_id, user_id, role) VALUES (?, ?, ?)",
+                    """INSERT INTO tenant_users (tenant_id, user_id, role)
+                       VALUES (%s, %s, %s)
+                       ON CONFLICT (tenant_id, user_id) DO NOTHING""",
                     (tid, u["id"], role),
                 )

@@ -72,7 +72,7 @@ async def current_session(
             """SELECT u.email, u.name, u.locale, tu.role
                FROM users u
                JOIN tenant_users tu ON tu.user_id = u.id
-               WHERE u.id = ? AND tu.tenant_id = ?""",
+               WHERE u.id = %s AND tu.tenant_id = %s""",
             (user_id, tenant_id),
         ).fetchone()
     if not row:

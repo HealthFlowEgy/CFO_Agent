@@ -23,6 +23,6 @@ def record(event: str, payload: dict, *, tenant_id: Optional[str] = None,
         h = _hash(prev, event, payload)
         conn.execute(
             """INSERT INTO audit_log (tenant_id, user_id, event, payload_json, prev_hash, hash)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               VALUES (%s, %s, %s, %s, %s, %s)""",
             (tenant_id, user_id, event, json.dumps(payload, default=str), prev, h),
         )

@@ -9,7 +9,9 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_ttl_minutes: int = 60
 
-    db_path: str = "/data/cfo.db"
+    # Postgres connection string. DigitalOcean Managed DB injects this
+    # automatically via ${db.DATABASE_URL}; locally docker-compose sets it.
+    database_url: str = "postgresql://cfo:cfo@localhost:5432/cfo"
 
     model_conductor: str = "claude-opus-4-5"
     model_specialist: str = "claude-sonnet-4-5"

@@ -218,11 +218,11 @@ def _months_between(start: str, end: str) -> list[str]:
 
 def _query_service_line_pnl(tenant_id: str, args: dict) -> dict:
     months = _months_between(args["period_start"], args["period_end"])
-    placeholders = ",".join("?" * len(months))
+    placeholders = ",".join(["%s"] * len(months))
     sl_filter = ""
     params: list[Any] = [tenant_id, *months]
     if args.get("service_lines"):
-        sl_filter = " AND service_line IN (" + ",".join("?" * len(args["service_lines"])) + ")"
+        sl_filter = " AND service_line IN (" + ",".join(["%s"] * len(args["service_lines"])) + ")"
         params.extend(args["service_lines"])
     include_oh = args.get("include_overhead_allocation", True)
 
@@ -236,7 +236,7 @@ def _query_service_line_pnl(tenant_id: str, args: dict) -> dict:
                 FROM gl_entries g
                 JOIN service_lines sl
                   ON sl.tenant_id = g.tenant_id AND sl.code = g.service_line
-                WHERE g.tenant_id = ?
+                WHERE g.tenant_id = %s
                   AND g.period IN ({placeholders})
                   {sl_filter}
                 GROUP BY sl.code, sl.name, sl.name_ar
@@ -287,7 +287,7 @@ def _query_revenue_cycle(tenant_id: str, args: dict) -> dict:
     payer_filter = ""
     params: list[Any] = [tenant_id, period]
     if args.get("payer_codes"):
-        payer_filter = " AND payer_code IN (" + ",".join("?" * len(args["payer_codes"])) + ")"
+        payer_filter = " AND payer_code IN (" + ",".join(["%s"] * len(args["payer_codes"])) + ")"
         params.extend(args["payer_codes"])
 
     with get_db() as conn:
@@ -296,7 +296,7 @@ def _query_revenue_cycle(tenant_id: str, args: dict) -> dict:
                        SUM(denied) AS denied, SUM(outstanding) AS outstanding,
                        AVG(days_in_ar) AS days_in_ar
                 FROM claims_summary
-                WHERE tenant_id = ? AND period = ?{payer_filter}""",
+                WHERE tenant_id = %s AND period = %s{payer_filter}""",
             params,
         ).fetchone()
 
@@ -338,7 +338,7 @@ def _query_payer_performance(tenant_id: str, args: dict) -> dict:
             cur = date(cur.year - 1, 12, 1)
         else:
             cur = date(cur.year, cur.month - 1, 1)
-    placeholders = ",".join("?" * len(months))
+    placeholders = ",".join(["%s"] * len(months))
 
     with get_db() as conn:
         rows = conn.execute(
@@ -351,7 +351,7 @@ def _query_payer_performance(tenant_id: str, args: dict) -> dict:
                 FROM claims_summary c
                 JOIN payers p
                   ON p.tenant_id = c.tenant_id AND p.code = c.payer_code
-                WHERE c.tenant_id = ? AND c.period IN ({placeholders})
+                WHERE c.tenant_id = %s AND c.period IN ({placeholders})
                 GROUP BY p.code, p.name, p.name_ar
                 ORDER BY billed DESC""",
             [tenant_id, *months],
@@ -379,7 +379,7 @@ def _query_cash_position(tenant_id: str, args: dict) -> dict:
     with get_db() as conn:
         latest = conn.execute(
             """SELECT MAX(as_of_date) AS d FROM cash_balances
-               WHERE tenant_id = ? AND as_of_date <= ?""",
+               WHERE tenant_id = %s AND as_of_date <= %s""",
             (tenant_id, args["as_of"]),
         ).fetchone()
         d = latest["d"]
@@ -387,16 +387,16 @@ def _query_cash_position(tenant_id: str, args: dict) -> dict:
             return {"as_of": args["as_of"], "accounts": [], "total": 0.0}
         rows = conn.execute(
             """SELECT account, currency, balance FROM cash_balances
-               WHERE tenant_id = ? AND as_of_date = ?""",
+               WHERE tenant_id = %s AND as_of_date = %s""",
             (tenant_id, d),
         ).fetchall()
         # Prior week
         prior_d = (datetime.strptime(d, "%Y-%m-%d").date() - timedelta(days=7)).isoformat()
         prior = conn.execute(
             """SELECT SUM(balance) AS s FROM cash_balances
-               WHERE tenant_id = ? AND as_of_date = (
+               WHERE tenant_id = %s AND as_of_date = (
                  SELECT MAX(as_of_date) FROM cash_balances
-                 WHERE tenant_id = ? AND as_of_date <= ?
+                 WHERE tenant_id = %s AND as_of_date <= %s
                )""",
             (tenant_id, tenant_id, prior_d),
         ).fetchone()

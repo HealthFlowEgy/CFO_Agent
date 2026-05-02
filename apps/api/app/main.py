@@ -67,7 +67,7 @@ class LoginOut(BaseModel):
 def login(payload: LoginIn) -> LoginOut:
     with get_db() as conn:
         u = conn.execute(
-            "SELECT id, email, name, locale, password_hash FROM users WHERE email = ?",
+            "SELECT id, email, name, locale, password_hash FROM users WHERE email = %s",
             (payload.email.lower(),),
         ).fetchone()
         if not u or not verify_password(payload.password, u["password_hash"]):
@@ -77,7 +77,7 @@ def login(payload: LoginIn) -> LoginOut:
             """SELECT t.id, t.name, t.name_ar, t.currency, t.plan, tu.role
                FROM tenant_users tu
                JOIN tenants t ON t.id = tu.tenant_id
-               WHERE tu.user_id = ?
+               WHERE tu.user_id = %s
                ORDER BY t.name""",
             (u["id"],),
         ).fetchall()
@@ -105,7 +105,7 @@ def me(session: Session = Depends(current_session)) -> dict:
         tenants = [dict(r) for r in conn.execute(
             """SELECT t.id, t.name, t.name_ar, t.currency, t.plan, tu.role
                FROM tenant_users tu JOIN tenants t ON t.id = tu.tenant_id
-               WHERE tu.user_id = ? ORDER BY t.name""",
+               WHERE tu.user_id = %s ORDER BY t.name""",
             (session.user_id,),
         ).fetchall()]
     return {
@@ -123,7 +123,7 @@ def switch_tenant(body: dict, session: Session = Depends(current_session)) -> di
         raise HTTPException(400, "tenant_id required")
     with get_db() as conn:
         row = conn.execute(
-            "SELECT role FROM tenant_users WHERE user_id = ? AND tenant_id = ?",
+            "SELECT role FROM tenant_users WHERE user_id = %s AND tenant_id = %s",
             (session.user_id, new_tid),
         ).fetchone()
         if not row:
@@ -190,11 +190,12 @@ def billing_usage(session: Session = Depends(current_session)) -> dict:
     with get_db() as conn:
         rows = conn.execute(
             """SELECT payload_json FROM audit_log
-               WHERE tenant_id = ? AND event = 'agent.run' AND substr(created_at, 1, 7) = ?""",
+               WHERE tenant_id = %s AND event = 'agent.run'
+                 AND to_char(created_at, 'YYYY-MM') = %s""",
             (session.tenant_id, month),
         ).fetchall()
         plan_row = conn.execute(
-            "SELECT plan FROM tenants WHERE id = ?", (session.tenant_id,),
+            "SELECT plan FROM tenants WHERE id = %s", (session.tenant_id,),
         ).fetchone()
     plan_id = (plan_row["plan"] if plan_row else "pro").lower()
     plan = PLANS.get(plan_id, PLANS["pro"])
@@ -236,7 +237,7 @@ def billing_change_plan(body: dict, session: Session = Depends(current_session))
     if session.role not in ("cfo", "tenant.owner", "tenant.admin", "controller"):
         raise HTTPException(403, "only CFO / admin / controller may change plan")
     with get_db() as conn:
-        conn.execute("UPDATE tenants SET plan = ? WHERE id = ?", (target, session.tenant_id))
+        conn.execute("UPDATE tenants SET plan = %s WHERE id = %s", (target, session.tenant_id))
     audit_record("billing.plan_changed", {"to": target}, tenant_id=session.tenant_id, user_id=session.user_id)
     return {"ok": True, "plan_id": target}
 
@@ -278,7 +279,7 @@ def list_conversations(session: Session = Depends(current_session)) -> list[dict
     with get_db() as conn:
         rows = conn.execute(
             """SELECT id, title, created_at FROM conversations
-               WHERE tenant_id = ? AND user_id = ?
+               WHERE tenant_id = %s AND user_id = %s
                ORDER BY created_at DESC LIMIT 50""",
             (session.tenant_id, session.user_id),
         ).fetchall()
@@ -289,13 +290,13 @@ def list_conversations(session: Session = Depends(current_session)) -> list[dict
 def get_conversation(conv_id: str, session: Session = Depends(current_session)) -> dict:
     with get_db() as conn:
         c = conn.execute(
-            "SELECT id, title, created_at FROM conversations WHERE id = ? AND tenant_id = ? AND user_id = ?",
+            "SELECT id, title, created_at FROM conversations WHERE id = %s AND tenant_id = %s AND user_id = %s",
             (conv_id, session.tenant_id, session.user_id),
         ).fetchone()
         if not c:
             raise HTTPException(404, "not found")
         msgs = conn.execute(
-            "SELECT id, role, content_json, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at",
+            "SELECT id, role, content_json, created_at FROM messages WHERE conversation_id = %s ORDER BY created_at",
             (conv_id,),
         ).fetchall()
     return {
@@ -311,7 +312,7 @@ def get_conversation(conv_id: str, session: Session = Depends(current_session)) 
 def _ensure_conversation(conn, session: Session, conv_id: Optional[str], first_message: str) -> str:
     if conv_id:
         c = conn.execute(
-            "SELECT id FROM conversations WHERE id = ? AND tenant_id = ? AND user_id = ?",
+            "SELECT id FROM conversations WHERE id = %s AND tenant_id = %s AND user_id = %s",
             (conv_id, session.tenant_id, session.user_id),
         ).fetchone()
         if not c:
@@ -320,7 +321,7 @@ def _ensure_conversation(conn, session: Session, conv_id: Optional[str], first_m
     new_id = "conv_" + uuid.uuid4().hex[:12]
     title = (first_message or "New conversation").strip()[:60]
     conn.execute(
-        "INSERT INTO conversations (id, tenant_id, user_id, title) VALUES (?, ?, ?, ?)",
+        "INSERT INTO conversations (id, tenant_id, user_id, title) VALUES (%s, %s, %s, %s)",
         (new_id, session.tenant_id, session.user_id, title),
     )
     return new_id
@@ -329,7 +330,7 @@ def _ensure_conversation(conn, session: Session, conv_id: Optional[str], first_m
 def _persist_message(conn, conv_id: str, role: str, content: dict) -> None:
     mid = "msg_" + uuid.uuid4().hex[:12]
     conn.execute(
-        "INSERT INTO messages (id, conversation_id, role, content_json) VALUES (?, ?, ?, ?)",
+        "INSERT INTO messages (id, conversation_id, role, content_json) VALUES (%s, %s, %s, %s)",
         (mid, conv_id, role, json.dumps(content, default=str)),
     )
 
@@ -341,7 +342,7 @@ async def converse_stream(payload: ConverseIn, session: Session = Depends(curren
         conv_id = _ensure_conversation(conn, session, payload.conversation_id, payload.message)
         _persist_message(conn, conv_id, "user", {"text": payload.message})
         tenant_row = conn.execute(
-            "SELECT id, name, name_ar, currency, plan FROM tenants WHERE id = ?",
+            "SELECT id, name, name_ar, currency, plan FROM tenants WHERE id = %s",
             (session.tenant_id,),
         ).fetchone()
         tenant = dict(tenant_row)
