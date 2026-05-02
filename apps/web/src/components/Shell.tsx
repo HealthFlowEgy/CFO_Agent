@@ -209,7 +209,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
               )}
             </div>
             <div className="text-[11px] text-slate-500 font-mono">
-              {health?.models?.conductor} · {health?.models?.specialist}
+              Conductor · Specialist
             </div>
           </div>
 
