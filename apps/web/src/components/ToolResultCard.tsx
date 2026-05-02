@@ -73,7 +73,7 @@ function ToolResultBody({ tool, result, locale }: { tool: string; result: any; l
         ["Denial rate", fmtPct(result.denial_rate_pct, locale)],
         ["Net collection", fmtPct(result.net_collection_rate_pct, locale)],
         ["Outstanding", fmtCurrency(result.totals?.outstanding, "EGP", locale)],
-      ].filter(([_, v]) => v && v !== "—")} />
+      ].filter((p): p is [string, string] => Boolean(p[1]) && p[1] !== "—")} />
     );
   }
 

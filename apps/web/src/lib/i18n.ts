@@ -3,7 +3,19 @@ import { createContext, useContext } from "react";
 
 export type Locale = "en" | "ar";
 
-export const dict = {
+type Dict = {
+  app_name: string; tagline: string; login: string; email: string; password: string;
+  workspace: string; dashboard: string; library: string; settings: string; sign_out: string;
+  ask_anything: string; placeholder_examples: readonly string[]; sources: string; tools_used: string;
+  plan: string; role: string; cash_position: string; days_in_ar: string; denial_rate: string;
+  operating_margin: string; top_payers: string; service_line_pnl: string; controls: string;
+  new_chat: string; recent: string; switch_tenant: string; powered_by: string;
+  mock_mode_banner: string; live_mode_banner: string;
+  phases: { planning: string; specialist: string; synthesis: string; done: string };
+  welcome_h: string; welcome_p: string; you: string; copilot: string;
+};
+
+export const dict: Record<Locale, Dict> = {
   en: {
     app_name: "HealthFlow CFO Copilot",
     tagline: "AI-powered financial intelligence for hospital CFOs",
@@ -86,9 +98,9 @@ export const dict = {
     you: "أنت",
     copilot: "المساعد",
   },
-} as const;
+};
 
-export const I18nCtx = createContext<{ locale: Locale; t: (typeof dict)["en"] }>({
+export const I18nCtx = createContext<{ locale: Locale; t: Dict }>({
   locale: "en",
   t: dict.en,
 });

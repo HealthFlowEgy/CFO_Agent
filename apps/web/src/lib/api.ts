@@ -64,6 +64,21 @@ export const api = {
     return jfetch<any>("/api/dashboard/summary");
   },
 
+  async plans() {
+    return jfetch<{ plans: Record<string, any> }>("/api/billing/plans");
+  },
+
+  async usage() {
+    return jfetch<any>("/api/billing/usage");
+  },
+
+  async changePlan(plan_id: string) {
+    return jfetch<{ ok: boolean; plan_id: string }>("/api/billing/change-plan", {
+      method: "POST",
+      body: JSON.stringify({ plan_id }),
+    });
+  },
+
   async listConversations() {
     return jfetch<{ id: string; title: string; created_at: string }[]>("/api/conversations");
   },

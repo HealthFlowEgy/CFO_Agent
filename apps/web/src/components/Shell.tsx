@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   LayoutDashboard, MessagesSquare, BookMarked, Settings as SettingsIcon,
-  LogOut, ChevronsUpDown, Sparkles, Hospital, Globe2,
+  LogOut, ChevronsUpDown, Sparkles, Hospital, Globe2, Receipt,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -75,6 +75,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     { href: "/", label: t.dashboard, icon: LayoutDashboard },
     { href: "/workspace", label: t.workspace, icon: MessagesSquare },
     { href: "/library", label: t.library, icon: BookMarked },
+    { href: "/billing", label: locale === "ar" ? "الفواتير" : "Billing", icon: Receipt },
     { href: "/settings", label: t.settings, icon: SettingsIcon },
   ];
 

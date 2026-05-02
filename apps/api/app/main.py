@@ -134,6 +134,113 @@ def switch_tenant(body: dict, session: Session = Depends(current_session)) -> di
 
 # ----------------- KPIs / Dashboard -----------------
 
+PLANS = {
+    "starter": {
+        "name": "Starter",
+        "price_usd_per_month": 499,
+        "monthly_token_budget": 2_000_000,
+        "agents": ["profitability", "rcm"],
+        "features": [
+            "Conversational workspace (EN/AR)",
+            "Service-line P&L, RCM, cash position tools",
+            "Up to 5 finance users",
+            "Email support",
+        ],
+    },
+    "pro": {
+        "name": "Pro",
+        "price_usd_per_month": 1_499,
+        "monthly_token_budget": 10_000_000,
+        "agents": ["profitability", "rcm", "cost_ops", "liquidity"],
+        "features": [
+            "Everything in Starter",
+            "Cost & Operations + Liquidity agents",
+            "13-week cash forecasts with stress scenarios",
+            "Up to 20 finance users",
+            "Priority support · 99.9% SLA",
+        ],
+    },
+    "enterprise": {
+        "name": "Enterprise",
+        "price_usd_per_month": 4_999,
+        "monthly_token_budget": 50_000_000,
+        "agents": ["profitability", "rcm", "cost_ops", "liquidity", "compliance", "forecasting"],
+        "features": [
+            "Everything in Pro",
+            "Compliance & Forecasting agents",
+            "Egypt-resident deployment, BYOK encryption",
+            "Unlimited users · dedicated CSM",
+            "Custom controls + audit-ready evidence pipelines",
+            "ISO 27001, SOC 2, PDPL alignment",
+        ],
+    },
+}
+
+
+@app.get("/api/billing/plans")
+def billing_plans() -> dict:
+    return {"plans": PLANS}
+
+
+@app.get("/api/billing/usage")
+def billing_usage(session: Session = Depends(current_session)) -> dict:
+    """Pseudo-usage derived from audit log entries this calendar month."""
+    from datetime import date
+    month = date.today().strftime("%Y-%m")
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT payload_json FROM audit_log
+               WHERE tenant_id = ? AND event = 'agent.run' AND substr(created_at, 1, 7) = ?""",
+            (session.tenant_id, month),
+        ).fetchall()
+        plan_row = conn.execute(
+            "SELECT plan FROM tenants WHERE id = ?", (session.tenant_id,),
+        ).fetchone()
+    plan_id = (plan_row["plan"] if plan_row else "pro").lower()
+    plan = PLANS.get(plan_id, PLANS["pro"])
+
+    total_tokens = 0
+    runs = 0
+    tools = 0
+    for r in rows:
+        try:
+            p = json.loads(r["payload_json"])
+        except Exception:
+            continue
+        runs += 1
+        for sp in p.get("specialists", []):
+            tools += len(sp.get("tools", []))
+            usage = sp.get("usage") or {}
+            total_tokens += int(usage.get("input_tokens", 0)) + int(usage.get("output_tokens", 0))
+        syn = p.get("synthesis_usage") or {}
+        total_tokens += int(syn.get("input_tokens", 0)) + int(syn.get("output_tokens", 0))
+
+    pct = round(total_tokens / plan["monthly_token_budget"] * 100, 1) if plan["monthly_token_budget"] else 0.0
+    return {
+        "month": month,
+        "plan_id": plan_id,
+        "plan": plan,
+        "tokens_used": total_tokens,
+        "tokens_budget": plan["monthly_token_budget"],
+        "tokens_pct": pct,
+        "agent_runs": runs,
+        "tool_calls": tools,
+    }
+
+
+@app.post("/api/billing/change-plan")
+def billing_change_plan(body: dict, session: Session = Depends(current_session)) -> dict:
+    target = (body.get("plan_id") or "").lower()
+    if target not in PLANS:
+        raise HTTPException(400, "unknown plan")
+    if session.role not in ("cfo", "tenant.owner", "tenant.admin", "controller"):
+        raise HTTPException(403, "only CFO / admin / controller may change plan")
+    with get_db() as conn:
+        conn.execute("UPDATE tenants SET plan = ? WHERE id = ?", (target, session.tenant_id))
+    audit_record("billing.plan_changed", {"to": target}, tenant_id=session.tenant_id, user_id=session.user_id)
+    return {"ok": True, "plan_id": target}
+
+
 @app.get("/api/dashboard/summary")
 def dashboard_summary(session: Session = Depends(current_session)) -> dict:
     from app.tools import invoke
