@@ -12,6 +12,7 @@ import { Shell } from "@/components/Shell";
 import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { ToolResultCard } from "@/components/ToolResultCard";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 type Phase = "idle" | "planning" | "specialist" | "synthesis" | "done";
 
@@ -543,9 +544,11 @@ function TurnView({ turn }: { turn: Turn }) {
         ))}
 
         {turn.text && (
-          <div className="glass-strong p-4 text-sm leading-relaxed prose-cfo">
-            <Markdownish text={turn.text} />
-          </div>
+          <ErrorBoundary>
+            <div className="glass-strong p-4 text-sm leading-relaxed prose-cfo">
+              <Markdownish text={turn.text} />
+            </div>
+          </ErrorBoundary>
         )}
         {turn.error && (
           <div className="glass-strong p-4 text-sm border border-rose-400/30 bg-rose-500/5 flex items-start gap-3">
@@ -666,7 +669,7 @@ function Markdownish({ text }: { text: string }) {
 function EvidencePane({ turns }: { turns: Turn[] }) {
   const { t, locale } = useI18n();
   const last = [...turns].reverse().find((t) => t.role === "assistant");
-  const tools = last?.specialists?.flatMap((s) => s.tool_results) || [];
+  const tools = (last?.specialists ?? []).flatMap((s) => Array.isArray(s?.tool_results) ? s.tool_results : []).filter(Boolean);
 
   if (!last || tools.length === 0) {
     return (
@@ -697,7 +700,9 @@ function EvidencePane({ turns }: { turns: Turn[] }) {
         <Wrench className="w-3 h-3" /> {locale === "ar" ? "الأدلة" : "Evidence"} · {tools.length}
       </div>
       {tools.map((tr, i) => (
-        <ToolResultCard key={i} tool={tr.tool} result={tr.result} />
+        <ErrorBoundary key={i}>
+          <ToolResultCard tool={tr?.tool ?? "unknown"} result={tr?.result} />
+        </ErrorBoundary>
       ))}
     </div>
   );
