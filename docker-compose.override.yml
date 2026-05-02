@@ -1,0 +1,22 @@
+services:
+  api:
+    environment:
+      - CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+    ports: !override
+      - "127.0.0.1:8000:8000"
+    expose:
+      - "8000"
+  postgres:
+    ports: !reset []
+    expose:
+      - "5432"
+  web:
+    build:
+      context: ./apps/web
+      args:
+        NEXT_PUBLIC_API_URL: http://api:8000
+    environment:
+      - NEXT_PUBLIC_API_URL=http://api:8000
+      - NODE_ENV=production
+    ports: !override
+      - "127.0.0.1:3000:3000"
