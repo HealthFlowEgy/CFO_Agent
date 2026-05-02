@@ -29,6 +29,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
     (async () => {
       try {
         const me = await api.me();
+        // Platform admins belong on /admin— redirect away from tenant Shell.
+        if (me.user.is_platform_admin && !path?.startsWith("/admin")) {
+          router.replace("/admin");
+          return;
+        }
         setUser(me.user);
         setTenants(me.tenants);
         setActiveTenantId(me.active_tenant_id);

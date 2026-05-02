@@ -24,7 +24,16 @@ export default function LoginPage() {
     setBusy(true); setError(null);
     try {
       await api.login(email, password);
-      router.push("/");
+      try {
+        const me = await api.me();
+        if (me?.user?.is_platform_admin) {
+          router.push("/admin");
+        } else {
+          router.push("/");
+        }
+      } catch {
+        router.push("/");
+      }
     } catch (err: any) {
       setError("Invalid credentials or backend unreachable.");
     } finally { setBusy(false); }

@@ -220,26 +220,26 @@ function WorkspaceInner() {
 
   const examples = useMemo(() => t.placeholder_examples, [t]);
 
-  // Side-panel visibility (collapsible). Defaults: shown on desktop, hidden on small screens.
-  const [showHistory, setShowHistory] = useState(true);
+  // Side-panel visibility (collapsible). Defaults: history off (uncluttered); evidence shown on wide screens.
+  const [showHistory, setShowHistory] = useState(false);
   const [showEvidence, setShowEvidence] = useState(true);
   useEffect(() => {
     const apply = () => {
       if (typeof window === "undefined") return;
       const w = window.innerWidth;
-      setShowHistory(w >= 1024);
-      setShowEvidence(w >= 1280);
+      setShowHistory(w >= 1440);
+      setShowEvidence(w >= 1100);
     };
     apply();
     window.addEventListener("resize", apply);
     return () => window.removeEventListener("resize", apply);
   }, []);
 
-  // Compute responsive grid template
+  // Compute responsive grid template — keep main column dominant
   const gridTemplate = [
-    showHistory ? "260px" : "0",
+    showHistory ? "240px" : "0",
     "1fr",
-    showEvidence ? "minmax(360px, 440px)" : "0",
+    showEvidence ? "minmax(300px, 360px)" : "0",
   ].join(" ");
 
   return (
@@ -313,7 +313,7 @@ function WorkspaceInner() {
         )}
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-3xl px-4 sm:px-6 py-6 space-y-5">
+          <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 py-6 space-y-5">
             {turns.length === 0 && <Welcome examples={examples} onPick={(s) => setInput(s)} />}
 
             {turns.map((turn, i) => (
@@ -326,7 +326,7 @@ function WorkspaceInner() {
 
         {/* Composer */}
         <div className="border-t border-white/5 bg-ink-900/40 px-4 sm:px-6 py-4">
-          <div className="mx-auto w-full max-w-3xl">
+          <div className="mx-auto w-full max-w-6xl">
           {(attachments.length > 0 || uploading) && (
             <div className="mb-2 flex flex-wrap gap-2">
               {attachments.map((a) => (
@@ -470,7 +470,7 @@ function TurnView({ turn }: { turn: Turn }) {
   if (turn.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[78%] glass-strong px-4 py-3">
+        <div className="max-w-[640px] glass-strong px-4 py-3">
           <div className="text-[10px] uppercase tracking-wider text-signal-300/80 mb-1">{t.you}</div>
           <div className="whitespace-pre-wrap text-sm">{turn.text}</div>
           {turn.attachments && turn.attachments.length > 0 && (
