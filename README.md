@@ -69,6 +69,34 @@ citations.
 
 ---
 
+## Deploy to DigitalOcean App Platform
+
+A ready-to-import App Platform spec lives at `.do/app.yaml`. It provisions
+both components (web + api), wires their URLs and CORS via DO variable
+substitution, and configures health checks.
+
+**One-click deploy:**
+
+[![Deploy to DigitalOcean](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/apps/new?repo=https://github.com/healthflowegy/cfo_agent/tree/claude/healthflow-cfo-srs-4WILe)
+
+After import, set the `ANTHROPIC_API_KEY` secret in the console
+(Apps → cfo-copilot → **api** component → Settings → Environment).
+Without it the system runs in mock mode (still demoable end-to-end).
+
+**Or via doctl:**
+
+```bash
+doctl apps create --spec .do/app.yaml
+# then set the secret:
+doctl apps update <APP_ID> --spec - <<< "$(cat .do/app.yaml)"
+```
+
+V0 uses ephemeral SQLite (`/tmp/cfo.db`) — re-seeds on every container
+restart. For production, swap to DigitalOcean Managed Postgres and update
+`apps/api/app/db.py` accordingly.
+
+---
+
 ## Local dev (no Docker)
 
 ### Backend

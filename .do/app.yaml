@@ -1,0 +1,95 @@
+# DigitalOcean App Platform spec — HealthFlow CFO Copilot V0
+#
+# One-click deploy:
+#   https://cloud.digitalocean.com/apps/new?repo=https://github.com/healthflowegy/cfo_agent/tree/claude/healthflow-cfo-srs-4WILe
+#
+# Or via doctl:
+#   doctl apps create --spec .do/app.yaml
+#
+# After import you MUST set the ANTHROPIC_API_KEY secret in the
+# DigitalOcean console (Apps → cfo-copilot → api → Settings → Environment).
+# Without it, the system runs in mock mode (still demoable).
+
+name: cfo-copilot
+region: fra   # Frankfurt — closest DO region to Egypt
+features:
+  - buildpack-stack=ubuntu-22
+
+services:
+  # -----------------------------
+  # Backend: FastAPI + agent stack
+  # -----------------------------
+  - name: api
+    dockerfile_path: apps/api/Dockerfile
+    source_dir: apps/api
+    github:
+      repo: healthflowegy/cfo_agent
+      branch: claude/healthflow-cfo-srs-4WILe
+      deploy_on_push: true
+    http_port: 8000
+    instance_count: 1
+    instance_size_slug: basic-xs   # 1 vCPU / 1 GB — enough for V0
+    health_check:
+      http_path: /api/health
+      initial_delay_seconds: 10
+      period_seconds: 15
+      timeout_seconds: 5
+      failure_threshold: 5
+    envs:
+      # Provided by you in the DO console (Type: SECRET).
+      - key: ANTHROPIC_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+        value: ""
+      # Auto-generated random secret (DO supports literal default; rotate later).
+      - key: JWT_SECRET
+        scope: RUN_TIME
+        type: SECRET
+        value: "change-me-on-deploy"
+      # SQLite path inside the container — ephemeral by design (re-seeds on restart).
+      - key: DB_PATH
+        scope: RUN_TIME
+        value: /tmp/cfo.db
+      # Model identifiers (override only if you want to pin to specific snapshots).
+      - key: MODEL_CONDUCTOR
+        scope: RUN_TIME
+        value: claude-opus-4-5
+      - key: MODEL_SPECIALIST
+        scope: RUN_TIME
+        value: claude-sonnet-4-5
+      - key: MODEL_HAIKU
+        scope: RUN_TIME
+        value: claude-haiku-4-5
+      # Allow the web component (and DO's preview URLs) to call this API.
+      - key: CORS_ORIGINS
+        scope: RUN_TIME
+        value: ${web.PUBLIC_URL}
+
+  # -----------------------------
+  # Frontend: Next.js workspace
+  # -----------------------------
+  - name: web
+    dockerfile_path: apps/web/Dockerfile
+    source_dir: apps/web
+    github:
+      repo: healthflowegy/cfo_agent
+      branch: claude/healthflow-cfo-srs-4WILe
+      deploy_on_push: true
+    http_port: 3000
+    instance_count: 1
+    instance_size_slug: basic-xs
+    health_check:
+      http_path: /login
+      initial_delay_seconds: 20
+      period_seconds: 15
+      timeout_seconds: 5
+      failure_threshold: 5
+    envs:
+      # Bound to api's public URL via DO variable substitution.
+      # Available at both build time (baked into next.config.mjs rewrites) and runtime.
+      - key: NEXT_PUBLIC_API_URL
+        scope: RUN_AND_BUILD_TIME
+        value: ${api.PUBLIC_URL}
+      - key: NODE_ENV
+        scope: RUN_TIME
+        value: production
