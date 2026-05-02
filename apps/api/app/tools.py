@@ -10,6 +10,8 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from app.db import get_db
+from app import memory as memory_mod
+from app import uploads as uploads_mod
 
 
 # ---------- JSON Schemas exposed to the model ----------
@@ -167,6 +169,73 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 },
             },
             "required": ["title", "type", "series"],
+        },
+    },
+    {
+        "name": "analyze_uploaded_statement",
+        "description": (
+            "Return the parsed structured summary of a previously uploaded statement "
+            "(PDF / CSV / XLS / XLSX). Use this whenever the user asks to analyze, "
+            "review, summarize, or extract numbers from an uploaded file. "
+            "You MUST cite this tool for any number you quote from the document."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "upload_id": {"type": "string", "description": "id returned at upload time, e.g. up_abc123"}
+            },
+            "required": ["upload_id"],
+        },
+    },
+    {
+        "name": "recommend_actions_from_statement",
+        "description": (
+            "Generate a structured set of CFO recommendations grounded in the parsed "
+            "summary of an uploaded statement. Use AFTER analyze_uploaded_statement. "
+            "Returns a list of recommendations with severity, rationale, and a suggested follow-up."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "upload_id": {"type": "string"},
+                "focus": {
+                    "type": "string",
+                    "enum": ["liquidity", "collections", "cost_control", "compliance", "general"],
+                    "default": "general",
+                },
+            },
+            "required": ["upload_id"],
+        },
+    },
+    {
+        "name": "recall_memory",
+        "description": (
+            "Recall pinned facts and prior insights for the current user/tenant. "
+            "Use at the start of an analysis when prior context might apply (e.g. "
+            "\"What did we say last week about UHI denials?\")."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Optional topic hint to bias retrieval."},
+                "k": {"type": "integer", "minimum": 1, "maximum": 20, "default": 8},
+            },
+        },
+    },
+    {
+        "name": "pin_memory",
+        "description": (
+            "Persist a short, durable fact about the tenant or user that should "
+            "influence future analyses. Examples: 'Payroll runs from NBE on the 25th', "
+            "'CFO prefers EGP-only narratives'. Keep facts under 200 chars."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "fact": {"type": "string"},
+                "importance": {"type": "integer", "minimum": 1, "maximum": 10, "default": 7},
+            },
+            "required": ["fact"],
         },
     },
     {
@@ -521,6 +590,110 @@ def _run_controls_check(tenant_id: str, args: dict) -> dict:
 
 # ---------- Dispatcher ----------
 
+def _analyze_uploaded_statement(tenant_id: str, args: dict) -> dict:
+    up = uploads_mod.get_upload(tenant_id, args["upload_id"])
+    if not up:
+        return {"error": f"upload not found: {args['upload_id']}"}
+    if up.get("status") != "parsed":
+        return {"error": up.get("parse_error") or "upload could not be parsed",
+                "upload_id": up["id"], "filename": up["filename"]}
+    return {
+        "upload_id": up["id"],
+        "filename": up["filename"],
+        "kind": up["kind"],
+        "summary": up["summary"],
+    }
+
+
+def _recommend_actions_from_statement(tenant_id: str, args: dict) -> dict:
+    up = uploads_mod.get_upload(tenant_id, args["upload_id"])
+    if not up or up.get("status") != "parsed":
+        return {"error": "upload not parsed yet"}
+    s = up["summary"] or {}
+    kind = s.get("kind") or up.get("kind") or "generic"
+    focus = args.get("focus", "general")
+    recs: list[dict] = []
+
+    if kind == "bank_statement":
+        net = float(s.get("net_movement") or 0)
+        debits_sum = float((s.get("debits") or {}).get("sum") or 0)
+        credits_sum = float((s.get("credits") or {}).get("sum") or 0)
+        if net < 0:
+            recs.append({"severity": "high", "action": "Investigate negative net movement",
+                         "rationale": f"Net cash movement on the statement is {net:,.2f} (debits {debits_sum:,.2f} > credits {credits_sum:,.2f})."})
+        big_debit = float(s.get("largest_debit") or 0)
+        if abs(big_debit) > abs(net) * 0.4 and big_debit != 0:
+            recs.append({"severity": "medium", "action": "Validate the largest debit",
+                         "rationale": f"Single debit of {big_debit:,.2f} accounts for >40% of net movement; confirm authorization and counterparty."})
+        if focus == "liquidity":
+            recs.append({"severity": "medium", "action": "Refresh 13-week cash forecast",
+                         "rationale": "Use the closing balance and recent inflow run-rate to update the rolling forecast."})
+
+    elif kind == "ar_aging":
+        buckets = s.get("aging_buckets") or {}
+        total = float(s.get("total_outstanding") or 0)
+        gt90 = sum(float(v) for k, v in buckets.items() if any(t in k for t in ["91", ">90", ">180"]))
+        if total and gt90 / total > 0.20:
+            recs.append({"severity": "high", "action": "Escalate >90-day AR collections",
+                         "rationale": f"{gt90/total*100:.1f}% of outstanding AR sits beyond 90 days; assign to a collections sprint."})
+        offenders = s.get("top_offenders") or []
+        if offenders:
+            top = offenders[0]
+            recs.append({"severity": "medium", "action": f"Open dispute review with {top['name']}",
+                         "rationale": f"Largest aged exposure is {top['name']} at {top['total']:,.2f}."})
+
+    elif kind == "payer_remit":
+        by = s.get("by_payer") or []
+        if by:
+            top = by[0]
+            recs.append({"severity": "info", "action": f"Top remit payer: {top['payer']} ({top['amount']:,.2f})",
+                         "rationale": "Confirm posting and any short-pay variances against expected billed amounts."})
+
+    elif kind == "gl_export":
+        margin_pct = float(s.get("margin_pct") or 0)
+        if margin_pct < 5:
+            recs.append({"severity": "high", "action": "Run a cost-driver review",
+                         "rationale": f"Statement implies operating margin of {margin_pct:.1f}% — below sustainable threshold."})
+        else:
+            recs.append({"severity": "info", "action": "Tag GL classes for monthly close",
+                         "rationale": f"Margin {margin_pct:.1f}% on revenue {float(s.get('revenue_total') or 0):,.0f}; ready for narrative draft."})
+
+    if not recs:
+        recs.append({"severity": "info", "action": "Cross-reference with canonical data",
+                     "rationale": "Statement parsed but no automatic exception triggered. Use the summary as supplementary evidence."})
+
+    return {
+        "upload_id": up["id"],
+        "filename": up["filename"],
+        "kind": kind,
+        "focus": focus,
+        "recommendations": recs,
+    }
+
+
+def _recall_memory(tenant_id: str, args: dict) -> dict:
+    user_id = args.get("_user_id") or ""
+    if not user_id:
+        return {"error": "recall_memory requires a user context"}
+    facts = memory_mod.recall_relevant(
+        tenant_id=tenant_id, user_id=user_id,
+        query=args.get("query") or "", k=int(args.get("k") or 8),
+    )
+    return {"facts": [{"id": f["id"], "fact": f["fact"], "pinned": f["pinned"], "importance": f["importance"]} for f in facts]}
+
+
+def _pin_memory(tenant_id: str, args: dict) -> dict:
+    user_id = args.get("_user_id") or ""
+    if not user_id:
+        return {"error": "pin_memory requires a user context"}
+    f = memory_mod.pin_fact(
+        tenant_id=tenant_id, user_id=user_id,
+        fact=args["fact"], importance=int(args.get("importance") or 7),
+        source="agent",
+    )
+    return {"pinned": True, "fact": f}
+
+
 DISPATCH = {
     "query_service_line_pnl": _query_service_line_pnl,
     "query_revenue_cycle": _query_revenue_cycle,
@@ -529,16 +702,24 @@ DISPATCH = {
     "forecast_cash": _forecast_cash,
     "compute_kpi": _compute_kpi,
     "run_controls_check": _run_controls_check,
+    "analyze_uploaded_statement": _analyze_uploaded_statement,
+    "recommend_actions_from_statement": _recommend_actions_from_statement,
+    "recall_memory": _recall_memory,
+    "pin_memory": _pin_memory,
     # compose_chart / compose_table are pure data passthroughs (echo back the spec)
     "compose_chart": lambda tenant_id, args: {"chart": args},
     "compose_table": lambda tenant_id, args: {"table": args},
 }
 
 
-def invoke(tool_name: str, tenant_id: str, arguments: dict) -> dict:
+def invoke(tool_name: str, tenant_id: str, arguments: dict, *, user_id: str | None = None) -> dict:
     if tool_name not in DISPATCH:
         return {"error": f"unknown tool: {tool_name}"}
+    args = dict(arguments or {})
+    # Inject internal fields not visible to the model so memory tools can scope to user.
+    if user_id and tool_name in ("recall_memory", "pin_memory"):
+        args["_user_id"] = user_id
     try:
-        return DISPATCH[tool_name](tenant_id, arguments or {})
+        return DISPATCH[tool_name](tenant_id, args)
     except Exception as e:  # surface tool errors as data, never crash the agent loop
         return {"error": str(e), "tool": tool_name}

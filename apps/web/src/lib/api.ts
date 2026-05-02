@@ -107,12 +107,60 @@ export const api = {
     return jfetch<any>(`/api/conversations/${id}`);
   },
 
+  // ----- Uploads -----
+  async uploadFile(file: File, conversationId?: string) {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (conversationId) fd.append("conversation_id", conversationId);
+    const t = tokenStore.get();
+    const tid = tokenStore.activeTenant();
+    const headers: Record<string, string> = {};
+    if (t) headers["Authorization"] = `Bearer ${t}`;
+    if (tid) headers["X-Tenant-Id"] = tid;
+    const res = await fetch("/api/uploads", { method: "POST", headers, body: fd });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`upload failed: ${res.status} — ${text}`);
+    }
+    return res.json() as Promise<{
+      id: string; filename: string; kind: string; status: string; size_bytes: number;
+      summary?: any; parse_error?: string | null;
+    }>;
+  },
+  async listUploads(conversationId?: string) {
+    const qs = conversationId ? `?conversation_id=${encodeURIComponent(conversationId)}` : "";
+    return jfetch<{ uploads: any[] }>(`/api/uploads${qs}`);
+  },
+  async getUpload(uploadId: string) {
+    return jfetch<any>(`/api/uploads/${encodeURIComponent(uploadId)}`);
+  },
+
+  // ----- Memory -----
+  async listMemory() {
+    return jfetch<{ facts: any[] }>("/api/memory");
+  },
+  async pinMemory(fact: string, importance = 8) {
+    return jfetch<any>("/api/memory", {
+      method: "POST",
+      body: JSON.stringify({ fact, importance, pinned: true }),
+    });
+  },
+  async deleteMemory(id: string) {
+    return jfetch<{ deleted: boolean }>(`/api/memory/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
   // SSE streaming (POST + ReadableStream — native EventSource is GET-only).
-  async *converseStream(message: string, conversationId?: string): AsyncGenerator<{ event: string; data: any }> {
+  async *converseStream(
+    message: string, conversationId?: string, uploadIds?: string[],
+  ): AsyncGenerator<{ event: string; data: any }> {
     const res = await fetch("/api/converse/stream", {
       method: "POST",
       headers: authHeaders(),
-      body: JSON.stringify({ message, conversation_id: conversationId }),
+      body: JSON.stringify({
+        message,
+        conversation_id: conversationId,
+        upload_ids: uploadIds && uploadIds.length ? uploadIds : undefined,
+      }),
     });
     if (!res.ok || !res.body) {
       throw new Error(`stream failed: ${res.status}`);

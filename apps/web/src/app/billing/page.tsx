@@ -57,7 +57,7 @@ function Inner() {
         <p className="text-sm text-slate-400">
           {locale === "ar"
             ? "كل خطة تتضمن وكلاء متخصصين وميزانية شهرية للرموز."
-            : "Each plan includes specialist agents and a monthly token budget for the Anthropic API."}
+            : "Each plan includes specialist agents and a monthly compute budget for HealthFlow Copilot."}
         </p>
       </div>
 
@@ -176,8 +176,8 @@ function Inner() {
           </span>
         </div>
         {locale === "ar"
-          ? "نحسب رموز الإدخال + الإخراج من Anthropic لكل تشغيل وكيل (التخطيط + المتخصصون + التوليف). الفواتير المستحقة شهرياً."
-          : "We meter Anthropic input + output tokens across every agent run (planning + specialists + synthesis). Billed monthly. Cache hits and Batch API discounts are passed through transparently."}
+          ? "نحسب رموز الإدخال + الإخراج لكل تشغيل وكيل (التخطيط + المتخصصون + التركيب). الفواتير المستحقة شهرياً."
+          : "We meter input + output tokens across every HealthFlow Copilot run (planning + specialists + synthesis). Billed monthly. Cache hits and batch discounts are passed through transparently."}
       </div>
     </div>
   );

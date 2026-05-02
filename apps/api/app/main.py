@@ -2,7 +2,7 @@ import json
 import uuid
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
@@ -19,6 +19,8 @@ from app.auth import (
 from app.config import settings
 from app.db import get_db, init_db
 from app.seed import seed_demo_data
+from app import memory as memory_mod
+from app import uploads as uploads_mod
 
 
 app = FastAPI(title="HealthFlow CFO Copilot API", version="0.1.0")
@@ -476,6 +478,7 @@ def dashboard_summary(session: Session = Depends(current_session)) -> dict:
 class ConverseIn(BaseModel):
     conversation_id: Optional[str] = None
     message: str
+    upload_ids: Optional[list[str]] = None
 
 
 @app.get("/api/conversations")
@@ -541,10 +544,21 @@ def _persist_message(conn, conv_id: str, role: str, content: dict) -> None:
 
 @app.post("/api/converse/stream")
 async def converse_stream(payload: ConverseIn, session: Session = Depends(current_session)):
+    upload_ids = list(payload.upload_ids or [])
     # Ensure conversation + user message persisted before streaming starts
     with get_db() as conn:
         conv_id = _ensure_conversation(conn, session, payload.conversation_id, payload.message)
-        _persist_message(conn, conv_id, "user", {"text": payload.message})
+        user_content = {"text": payload.message}
+        if upload_ids:
+            user_content["upload_ids"] = upload_ids
+        _persist_message(conn, conv_id, "user", user_content)
+        # Tag uploads with the conversation if they don't already have one
+        if upload_ids:
+            conn.execute(
+                "UPDATE uploads SET conversation_id = COALESCE(conversation_id, %s) "
+                "WHERE tenant_id = %s AND id = ANY(%s)",
+                (conv_id, session.tenant_id, upload_ids),
+            )
         tenant_row = conn.execute(
             "SELECT id, name, name_ar, currency, plan FROM tenants WHERE id = %s",
             (session.tenant_id,),
@@ -556,7 +570,8 @@ async def converse_stream(payload: ConverseIn, session: Session = Depends(curren
         yield {"event": "open", "data": json.dumps({"conversation_id": conv_id})}
         final_payload: Optional[dict] = None
         async for evt in stream_run(
-            user_query=payload.message, tenant=tenant, user_id=session.user_id
+            user_query=payload.message, tenant=tenant, user_id=session.user_id,
+            conversation_id=conv_id, upload_ids=upload_ids,
         ):
             yield {"event": evt["event"], "data": json.dumps(evt["data"], default=str)}
             if evt["event"] == "final":
@@ -567,3 +582,91 @@ async def converse_stream(payload: ConverseIn, session: Session = Depends(curren
                 _persist_message(conn, conv_id, "assistant", final_payload)
 
     return EventSourceResponse(event_generator())
+
+
+# ----------------- Uploads -----------------
+
+@app.post("/api/uploads")
+async def create_upload(
+    file: UploadFile = File(...),
+    conversation_id: Optional[str] = Form(default=None),
+    session: Session = Depends(current_session),
+) -> dict:
+    content = await file.read()
+    try:
+        result = uploads_mod.save_upload(
+            tenant_id=session.tenant_id,
+            user_id=session.user_id,
+            conversation_id=conversation_id,
+            filename=file.filename or "unnamed",
+            mime=file.content_type or "application/octet-stream",
+            content=content,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    audit_record(
+        "upload.created",
+        {"upload_id": result["id"], "filename": result["filename"], "kind": result["kind"],
+         "size_bytes": result["size_bytes"], "status": result["status"]},
+        tenant_id=session.tenant_id, user_id=session.user_id,
+    )
+    return result
+
+
+@app.get("/api/uploads")
+def list_uploads_endpoint(
+    conversation_id: Optional[str] = None,
+    session: Session = Depends(current_session),
+) -> dict:
+    rows = uploads_mod.list_uploads(
+        tenant_id=session.tenant_id, user_id=session.user_id,
+        conversation_id=conversation_id, limit=100,
+    )
+    return {"uploads": rows}
+
+
+@app.get("/api/uploads/{upload_id}")
+def get_upload_endpoint(upload_id: str, session: Session = Depends(current_session)) -> dict:
+    u = uploads_mod.get_upload(session.tenant_id, upload_id)
+    if not u:
+        raise HTTPException(404, "upload not found")
+    return u
+
+
+# ----------------- Memory -----------------
+
+class MemoryFactIn(BaseModel):
+    fact: str
+    importance: int = 7
+    pinned: bool = True
+
+
+@app.get("/api/memory")
+def list_memory(session: Session = Depends(current_session)) -> dict:
+    return {"facts": memory_mod.list_facts(
+        tenant_id=session.tenant_id, user_id=session.user_id, limit=200,
+    )}
+
+
+@app.post("/api/memory")
+def add_memory(payload: MemoryFactIn, session: Session = Depends(current_session)) -> dict:
+    f = memory_mod.pin_fact(
+        tenant_id=session.tenant_id, user_id=session.user_id,
+        fact=payload.fact, importance=payload.importance, pinned=payload.pinned,
+        source="manual",
+    )
+    audit_record("memory.fact_added", {"fact_id": f["id"]},
+                 tenant_id=session.tenant_id, user_id=session.user_id)
+    return f
+
+
+@app.delete("/api/memory/{fact_id}")
+def delete_memory(fact_id: str, session: Session = Depends(current_session)) -> dict:
+    ok = memory_mod.delete_fact(
+        tenant_id=session.tenant_id, user_id=session.user_id, fact_id=fact_id,
+    )
+    if not ok:
+        raise HTTPException(404, "fact not found")
+    audit_record("memory.fact_deleted", {"fact_id": fact_id},
+                 tenant_id=session.tenant_id, user_id=session.user_id)
+    return {"deleted": True}

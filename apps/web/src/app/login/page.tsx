@@ -47,12 +47,12 @@ export default function LoginPage() {
         <div className="space-y-6">
           <div>
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs bg-signal-500/10 border border-signal-400/30 text-signal-200 mb-4">
-              <span className="w-1.5 h-1.5 rounded-full bg-signal-400 animate-pulse-soft" /> Multi-agent · Anthropic-backed
+              <span className="w-1.5 h-1.5 rounded-full bg-signal-400 animate-pulse-soft" /> HealthFlow Copilot · multi-agent reasoning
             </div>
             <h1 className="text-4xl font-semibold leading-tight">
               Your hospital's CFO,<br />
               <span className="bg-gradient-to-r from-signal-400 to-gold-400 bg-clip-text text-transparent">
-                amplified by Claude.
+                amplified by HealthFlow.
               </span>
             </h1>
             <p className="mt-4 text-slate-400 max-w-md">

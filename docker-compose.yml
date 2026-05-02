@@ -31,6 +31,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    volumes:
+      - cfo_uploads:/data/uploads
     ports:
       - "8000:8000"
     healthcheck:
@@ -57,3 +59,4 @@ services:
 
 volumes:
   cfo_pg:
+  cfo_uploads:

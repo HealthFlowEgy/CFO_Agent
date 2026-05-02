@@ -133,11 +133,11 @@ function Inner() {
       <div className="glass p-4 text-xs text-slate-400">
         <div className="flex items-center gap-2 text-slate-300 mb-1">
           <Sparkles className="w-3.5 h-3.5 text-violet-300" />
-          <span className="text-sm font-medium">LLM mode: <span className="font-mono text-violet-200">{data.llm_mode}</span></span>
+          <span className="text-sm font-medium">Copilot mode: <span className="font-mono text-violet-200">{data.llm_mode}</span></span>
         </div>
         {data.llm_mode === "live"
-          ? "Anthropic API is configured; the orchestrator routes Conductor traffic to Opus and specialists to Sonnet."
-          : "ANTHROPIC_API_KEY is not set — running on the deterministic mock provider. Set it in DO console (api → Settings) to enable live Claude."}
+          ? "HealthFlow Copilot is configured for live mode; the orchestrator routes planning to the conductor and specialty work to the specialist agents."
+          : "AI provider key is not set — running on the deterministic mock provider. Configure it on the API service to enable live mode."}
       </div>
     </div>
   );

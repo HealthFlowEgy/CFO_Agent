@@ -136,6 +136,46 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS uploads (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    conversation_id TEXT,
+    filename TEXT NOT NULL,
+    mime TEXT,
+    size_bytes BIGINT NOT NULL DEFAULT 0,
+    storage_path TEXT NOT NULL,
+    kind TEXT,             -- bank_statement, gl_export, ar_aging, payer_remit, generic
+    status TEXT NOT NULL DEFAULT 'received',  -- received, parsed, failed
+    parse_error TEXT,
+    summary_json TEXT,     -- structured summary produced by parser
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS memory_facts (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'user_tenant', -- user_tenant | tenant
+    fact TEXT NOT NULL,
+    source TEXT,           -- conversation_id, upload_id, manual
+    importance INT NOT NULL DEFAULT 5,         -- 1..10 (10=most important)
+    pinned BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    last_used_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS memory_facts_lookup_idx
+    ON memory_facts (tenant_id, user_id, importance DESC);
+
+CREATE TABLE IF NOT EXISTS conversation_summaries (
+    conversation_id TEXT PRIMARY KEY REFERENCES conversations(id),
+    tenant_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS audit_log (
     id BIGSERIAL PRIMARY KEY,
     tenant_id TEXT,
@@ -152,6 +192,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
 # Idempotent ALTERs for tables that already exist on older deploys.
 MIGRATIONS = """
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_platform_admin BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS upload_ids TEXT;  -- comma-separated upload ids attached to a user message
 """
 
 

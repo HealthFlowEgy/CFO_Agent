@@ -48,13 +48,13 @@ function Inner() {
           </div>
         </div>
         <div className="glass p-5">
-          <div className="text-xs uppercase tracking-wider text-slate-500">LLM Mode</div>
+          <div className="text-xs uppercase tracking-wider text-slate-500">Copilot mode</div>
           <div className="mt-2 flex items-center gap-2">
             <span className={`w-2 h-2 rounded-full ${llmMode === "live" ? "bg-signal-400 animate-pulse-soft" : "bg-gold-400"}`}></span>
             <div className="text-2xl font-semibold capitalize">{llmMode || "…"}</div>
           </div>
           <div className="text-xs text-slate-400 mt-1">
-            {llmMode === "live" ? "Anthropic Claude API enabled" : "Deterministic mock provider"}
+            {llmMode === "live" ? "HealthFlow Copilot — live AI provider" : "Deterministic mock provider (demo)"}
           </div>
         </div>
         <div className="glass p-5">
@@ -103,7 +103,7 @@ function Inner() {
           ]} />
         <PostureCard icon={Sparkles} title={locale === "ar" ? "الذكاء الاصطناعي" : "AI posture"}
           items={[
-            "Anthropic Claude (Opus + Sonnet routing)",
+            "HealthFlow Copilot multi-agent runtime (planner + specialist routing)",
             "Tool-use over numeric reasoning",
             "Prompt caching on stable prefixes",
             "No PHI in prompts; tenant-scoped tool registry",
