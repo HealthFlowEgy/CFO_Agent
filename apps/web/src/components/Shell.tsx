@@ -196,12 +196,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
           {/* Top status bar */}
           <div className="border-b border-white/5 bg-ink-900/40 backdrop-blur-xl px-6 py-2.5 flex items-center justify-between">
             <div className="text-xs text-slate-400">
-              {health?.llm_mode === "live" ? (
+              {health?.llm_mode === "live" && (
                 <span className="flex items-center gap-2">
                   <span className="w-1.5 h-1.5 rounded-full bg-signal-400 shadow-glow animate-pulse-soft"></span>
                   {t.live_mode_banner}
                 </span>
-              ) : (
+              )}
+              {health?.llm_mode === "mock" && (
                 <span className="flex items-center gap-2">
                   <span className="w-1.5 h-1.5 rounded-full bg-gold-400"></span>
                   {t.mock_mode_banner}
