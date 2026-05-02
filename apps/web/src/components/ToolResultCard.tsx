@@ -11,7 +11,7 @@ import { compactCurrency, fmtCurrency, fmtNumber, fmtPct } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
 
 export function ToolResultCard({ tool, result }: { tool: string; result: any }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const { locale } = useI18n();
 
   return (
@@ -216,11 +216,107 @@ function ToolResultBody({ tool, result, locale }: { tool: string; result: any; l
     );
   }
 
-  // Fallback: pretty JSON
+  if (tool === "analyze_uploaded_statement") {
+    const s = result.summary || {};
+    const items: [string, string][] = [];
+    items.push(["Filename", String(result.filename || "—")]);
+    items.push(["Kind", String(result.kind || "—")]);
+    if (result.sheet_count) items.push(["Sheets", String(result.sheet_count)]);
+    if (s.rows != null) items.push(["Rows", String(s.rows)]);
+    if (s.net != null) items.push(["Net", fmtCurrency(s.net, "EGP", locale)]);
+    if (s.credits) items.push(["Credits", `${s.credits.count} · ${fmtCurrency(s.credits.sum, "EGP", locale)}`]);
+    if (s.debits) items.push(["Debits", `${s.debits.count} · ${fmtCurrency(s.debits.sum, "EGP", locale)}`]);
+    if (s.outstanding) items.push(["Outstanding", fmtCurrency(s.outstanding, "EGP", locale)]);
+    if (s.margin_pct != null) items.push(["Margin %", fmtPct(s.margin_pct, locale)]);
+    return (
+      <div className="space-y-3">
+        {items.length > 0 && <KVGrid items={items} />}
+        {Array.isArray(result.sheets) && result.sheets.length > 0 && (
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Sheets</div>
+            <div className="flex flex-wrap gap-1.5">
+              {result.sheets.slice(0, 24).map((sn: string) => (
+                <span key={sn} className="text-[11px] px-2 py-0.5 rounded bg-white/5 border border-white/10 text-slate-300 truncate max-w-[160px]" title={sn}>{sn}</span>
+              ))}
+              {result.sheets.length > 24 && <span className="text-[11px] text-slate-500">+{result.sheets.length - 24} more</span>}
+            </div>
+          </div>
+        )}
+        {result.headline?.largest_numeric_aggregates?.length > 0 && (
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Largest aggregates</div>
+            <table className="w-full text-xs">
+              <thead className="text-slate-500">
+                <tr><th className="text-start py-1">Sheet</th><th className="text-start py-1">Column</th><th className="text-end py-1">Sum</th></tr>
+              </thead>
+              <tbody>
+                {result.headline.largest_numeric_aggregates.slice(0, 6).map((r: any, i: number) => (
+                  <tr key={i} className="border-t border-white/5">
+                    <td className="py-1 truncate max-w-[120px]" title={r.sheet}>{r.sheet}</td>
+                    <td className="py-1 truncate max-w-[140px]" title={r.column}>{r.column}</td>
+                    <td className="py-1 text-end font-mono">{compactCurrency(Number(r.sum) || 0, "EGP", locale)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (tool === "recommend_actions_from_statement" && Array.isArray(result.recommendations)) {
+    const sevColor = (s: string) =>
+      s === "high" ? "bg-danger/15 text-danger border-danger/30" :
+      s === "medium" ? "bg-gold/15 text-gold-400 border-gold/30" :
+      "bg-signal-500/10 text-signal-200 border-signal-400/30";
+    return (
+      <div className="space-y-2">
+        <div className="text-[10px] uppercase tracking-wider text-slate-500">{result.recommendations.length} recommendation{result.recommendations.length === 1 ? "" : "s"} · focus: {result.focus || "general"}</div>
+        {result.recommendations.map((r: any, i: number) => (
+          <div key={i} className="glass p-2.5 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-medium text-slate-200">{r.action}</span>
+              <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded border ${sevColor(r.severity)}`}>{r.severity}</span>
+            </div>
+            <div className="text-slate-400 mt-1 leading-relaxed">{r.rationale}</div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (tool === "recall_memory" && Array.isArray(result.facts)) {
+    if (result.facts.length === 0) return <div className="text-xs text-slate-500">No prior facts on file.</div>;
+    return (
+      <div className="space-y-1.5">
+        {result.facts.map((f: any) => (
+          <div key={f.id} className="text-xs glass p-2 flex items-start gap-2">
+            <span className={`text-[10px] mt-0.5 px-1 rounded ${f.pinned ? "bg-violet-500/15 text-violet-200" : "bg-white/5 text-slate-400"}`}>{f.pinned ? "pinned" : "recall"}</span>
+            <span className="text-slate-300">{f.fact}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (tool === "pin_memory" && result.fact) {
+    return (
+      <div className="text-xs glass p-2.5">
+        <div className="text-violet-200 font-medium mb-1">Pinned to memory</div>
+        <div className="text-slate-300">{result.fact.fact}</div>
+      </div>
+    );
+  }
+
+  // Fallback: collapsible JSON (closed by default to keep panel tidy)
   return (
-    <pre className="text-[11px] font-mono text-slate-400 max-h-72 overflow-auto bg-black/30 p-3 rounded-lg">
-      {JSON.stringify(result, null, 2)}
-    </pre>
+    <details className="text-[11px] font-mono text-slate-400">
+      <summary className="cursor-pointer text-slate-500 hover:text-slate-300">Raw result</summary>
+      <pre className="mt-2 max-h-72 overflow-auto bg-black/30 p-3 rounded-lg">
+        {JSON.stringify(result, null, 2)}
+      </pre>
+    </details>
   );
 }
 

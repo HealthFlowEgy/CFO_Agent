@@ -220,10 +220,35 @@ function WorkspaceInner() {
 
   const examples = useMemo(() => t.placeholder_examples, [t]);
 
+  // Side-panel visibility (collapsible). Defaults: shown on desktop, hidden on small screens.
+  const [showHistory, setShowHistory] = useState(true);
+  const [showEvidence, setShowEvidence] = useState(true);
+  useEffect(() => {
+    const apply = () => {
+      if (typeof window === "undefined") return;
+      const w = window.innerWidth;
+      setShowHistory(w >= 1024);
+      setShowEvidence(w >= 1280);
+    };
+    apply();
+    window.addEventListener("resize", apply);
+    return () => window.removeEventListener("resize", apply);
+  }, []);
+
+  // Compute responsive grid template
+  const gridTemplate = [
+    showHistory ? "260px" : "0",
+    "1fr",
+    showEvidence ? "minmax(360px, 440px)" : "0",
+  ].join(" ");
+
   return (
-    <div className="grid h-full" style={{ gridTemplateColumns: "260px 1fr 460px" }}>
+    <div className="grid h-full transition-[grid-template-columns] duration-200" style={{ gridTemplateColumns: gridTemplate }}>
       {/* Conversations list */}
-      <aside className="border-e border-white/5 bg-ink-900/40 backdrop-blur-xl flex flex-col min-h-0">
+      <aside className={clsx(
+        "border-e border-white/5 bg-ink-900/40 backdrop-blur-xl flex flex-col min-h-0 overflow-hidden",
+        showHistory ? "opacity-100" : "opacity-0 pointer-events-none",
+      )}>
         <div className="p-4 border-b border-white/5">
           <button onClick={newConversation} className="btn-ghost w-full">
             <MessageSquarePlus className="w-4 h-4" /> {t.new_chat}
@@ -255,12 +280,28 @@ function WorkspaceInner() {
       {/* Conversation main */}
       <section className="flex flex-col min-w-0 min-h-0">
         {/* Phase strip */}
-        <div className="border-b border-white/5 bg-ink-900/40 px-6 py-3 flex items-center gap-2">
+        <div className="border-b border-white/5 bg-ink-900/40 px-4 sm:px-6 py-3 flex items-center gap-2 overflow-x-auto">
+          <button
+            onClick={() => setShowHistory((v) => !v)}
+            className="btn-ghost !px-2 !py-1.5 shrink-0"
+            title={showHistory ? "Hide history" : "Show history"}
+          >
+            <History className="w-3.5 h-3.5" />
+          </button>
           <PhasePill phase="planning" current={phase} label={t.phases.planning} icon={BrainCircuit} />
-          <ChevronRight className="w-3 h-3 text-slate-600" />
+          <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
           <PhasePill phase="specialist" current={phase} label={t.phases.specialist + (activeSpecialist ? ` · ${activeSpecialist}` : "")} icon={Layers} />
-          <ChevronRight className="w-3 h-3 text-slate-600" />
+          <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
           <PhasePill phase="synthesis" current={phase} label={t.phases.synthesis} icon={Sparkles} />
+          <div className="ms-auto flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => setShowEvidence((v) => !v)}
+              className="btn-ghost !px-2.5 !py-1.5 text-[11px]"
+              title={showEvidence ? "Hide evidence" : "Show evidence"}
+            >
+              <Wrench className="w-3.5 h-3.5" /> {showEvidence ? "Hide evidence" : "Show evidence"}
+            </button>
+          </div>
         </div>
 
         {warning && (
@@ -271,18 +312,21 @@ function WorkspaceInner() {
           </div>
         )}
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6 space-y-5">
-          {turns.length === 0 && <Welcome examples={examples} onPick={(s) => setInput(s)} />}
+        <div ref={scrollRef} className="flex-1 overflow-y-auto">
+          <div className="mx-auto w-full max-w-3xl px-4 sm:px-6 py-6 space-y-5">
+            {turns.length === 0 && <Welcome examples={examples} onPick={(s) => setInput(s)} />}
 
-          {turns.map((turn, i) => (
-            <TurnView key={i} turn={turn} />
-          ))}
+            {turns.map((turn, i) => (
+              <TurnView key={i} turn={turn} />
+            ))}
 
-          {streaming && phase !== "done" && <StreamingHint phase={phase} agent={activeSpecialist} />}
+            {streaming && phase !== "done" && <StreamingHint phase={phase} agent={activeSpecialist} />}
+          </div>
         </div>
 
         {/* Composer */}
-        <div className="border-t border-white/5 bg-ink-900/40 px-6 py-4">
+        <div className="border-t border-white/5 bg-ink-900/40 px-4 sm:px-6 py-4">
+          <div className="mx-auto w-full max-w-3xl">
           {(attachments.length > 0 || uploading) && (
             <div className="mb-2 flex flex-wrap gap-2">
               {attachments.map((a) => (
@@ -346,11 +390,15 @@ function WorkspaceInner() {
           <div className="mt-2 px-1 text-[11px] text-slate-500 flex items-center gap-2">
             <CornerDownLeft className="w-3 h-3" /> {locale === "ar" ? "اضغط Enter للإرسال" : "Press Enter to send · Shift+Enter for new line · Attach to analyze a statement"}
           </div>
+          </div>
         </div>
       </section>
 
       {/* Evidence pane */}
-      <aside className="border-s border-white/5 bg-ink-900/40 backdrop-blur-xl overflow-y-auto min-h-0">
+      <aside className={clsx(
+        "border-s border-white/5 bg-ink-900/40 backdrop-blur-xl overflow-y-auto min-h-0",
+        showEvidence ? "opacity-100" : "opacity-0 pointer-events-none",
+      )}>
         <EvidencePane turns={turns} />
       </aside>
     </div>

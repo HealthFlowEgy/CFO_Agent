@@ -658,9 +658,93 @@ def _recommend_actions_from_statement(tenant_id: str, args: dict) -> dict:
             recs.append({"severity": "info", "action": "Tag GL classes for monthly close",
                          "rationale": f"Margin {margin_pct:.1f}% on revenue {float(s.get('revenue_total') or 0):,.0f}; ready for narrative draft."})
 
+    elif kind == "financial_model":
+        head = s.get("headline") or {}
+        agg = head.get("largest_numeric_aggregates") or []
+        proj_sheets = head.get("projection_sheets") or []
+        sheet_count = int(head.get("sheet_count") or s.get("sheet_count") or 0)
+        keywords = head.get("detected_keywords") or []
+        per_sheet = s.get("per_sheet") or []
+
+        # Try to find a P&L-like sheet and a cash-flow-like sheet
+        pl_sheet = next((p for p in per_sheet if any(k in p["sheet"].lower() for k in ["p&l", "income", "pnl"])), None)
+        cf_sheet = next((p for p in per_sheet if "cash" in p["sheet"].lower()), None)
+        bs_sheet = next((p for p in per_sheet if "balance" in p["sheet"].lower()), None)
+        ass_sheet = next((p for p in per_sheet if "assumption" in p["sheet"].lower()), None)
+        scen_sheet = next((p for p in per_sheet if "scenario" in p["sheet"].lower() or "sensitivity" in p["sheet"].lower()), None)
+
+        recs.append({
+            "severity": "info",
+            "action": "Validate model integrity (links, hard-codes, sign conventions)",
+            "rationale": (
+                f"Workbook spans {sheet_count} sheets including {len(proj_sheets)} projection sheets. "
+                f"Detected concepts: {', '.join(keywords[:6]) or 'none'}."
+            ),
+        })
+        if ass_sheet:
+            recs.append({
+                "severity": "high",
+                "action": f"Stress-test assumptions in '{ass_sheet['sheet']}'",
+                "rationale": (
+                    f"Assumption sheet drives downstream projections. Run +/-10% sensitivity on top revenue/cost drivers "
+                    f"and confirm WACC, growth and FX rates are board-approved."
+                ),
+            })
+        if pl_sheet:
+            recs.append({
+                "severity": "high",
+                "action": f"Reconcile '{pl_sheet['sheet']}' to actuals YTD",
+                "rationale": (
+                    "Compare current-year P&L projection against management accounts; investigate >5% variance lines and "
+                    "refresh forward periods accordingly."
+                ),
+            })
+        if cf_sheet:
+            recs.append({
+                "severity": "medium",
+                "action": f"Verify cash-flow waterfall on '{cf_sheet['sheet']}'",
+                "rationale": (
+                    "Confirm working-capital, capex and debt-service items tie to balance sheet and that ending cash is "
+                    "non-negative across the projection horizon."
+                ),
+            })
+        if bs_sheet:
+            recs.append({
+                "severity": "medium",
+                "action": f"Check balance-sheet integrity in '{bs_sheet['sheet']}'",
+                "rationale": "Assets should equal liabilities + equity in every period; flag any imbalance > 0.5%."
+            })
+        if scen_sheet:
+            recs.append({
+                "severity": "info",
+                "action": f"Run downside / base / upside scenarios via '{scen_sheet['sheet']}'",
+                "rationale": "Quantify cash runway and covenant headroom under each scenario; circulate with board pack."
+            })
+        if agg:
+            top = agg[0]
+            recs.append({
+                "severity": "info",
+                "action": f"Spot-check largest aggregate: '{top['column']}' on '{top['sheet']}'",
+                "rationale": f"Sum of {top['sum']:,.0f} dominates the workbook; confirm it is correctly scaled and labeled."
+            })
+        if focus == "liquidity":
+            recs.append({
+                "severity": "high",
+                "action": "Translate model into a 13-week cash forecast",
+                "rationale": "Even an annual model needs a near-term liquidity bridge to operate; produce a 13-week cash forecast that ties to it."
+            })
+
+    # Generic fallback only when nothing matched (truly unknown shape)
     if not recs:
-        recs.append({"severity": "info", "action": "Cross-reference with canonical data",
-                     "rationale": "Statement parsed but no automatic exception triggered. Use the summary as supplementary evidence."})
+        recs.append({
+            "severity": "info",
+            "action": "Manually inspect the document with finance team",
+            "rationale": (
+                "Automated heuristics did not match a known statement shape. "
+                f"Document kind detected as '{kind}'. Use the summary fields as supplementary evidence and "
+                "add a tenant-specific rule if this format will recur."
+            ),
+        })
 
     return {
         "upload_id": up["id"],

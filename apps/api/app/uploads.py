@@ -123,15 +123,110 @@ def parse(path: Path, fmt: str) -> dict:
         df = pd.read_csv(path)
         return _classify_dataframe(df, source=path.name)
     if fmt in ("xls", "xlsx"):
-        # Load all sheets and pick the largest
-        sheets = pd.read_excel(path, sheet_name=None)
-        if not sheets:
-            return {"kind": "generic", "rows": 0, "note": "empty workbook"}
-        name, df = max(sheets.items(), key=lambda kv: len(kv[1]))
-        out = _classify_dataframe(df, source=f"{path.name}::{name}")
-        out["sheets"] = list(sheets.keys())
-        return out
+        return _parse_excel(path)
     return {"kind": "generic", "rows": 0, "note": f"unsupported format {fmt}"}
+
+
+def _parse_excel(path: Path) -> dict:
+    """Multi-sheet Excel parser. Detects financial models, GL extracts, AR aging,
+    payer remittance and bank statements; for true financial models it returns a
+    rich per-sheet shape so the agent can reason cross-sheet.
+    """
+    try:
+        sheets = pd.read_excel(path, sheet_name=None)
+    except Exception as e:
+        return {"kind": "generic", "note": f"could not read workbook: {e}"}
+    if not sheets:
+        return {"kind": "generic", "rows": 0, "note": "empty workbook"}
+
+    sheet_summaries: list[dict] = []
+    classifier_hits: dict[str, int] = {}
+    year_pattern = re.compile(r"\b20[2-3]\d\b")
+    fin_keywords = (
+        "revenue", "ebitda", "opex", "capex", "npv", "irr", "dcf",
+        "terminal value", "wacc", "valuation", "projection", "forecast",
+        "assumptions", "summary", "p&l", "income statement", "cash flow",
+        "balance sheet", "scenario",
+    )
+
+    for sname, df in sheets.items():
+        df = df.copy()
+        df.columns = [str(c).strip() for c in df.columns]
+        try:
+            kind_guess = _classify_dataframe(df, source=f"{path.name}::{sname}").get("kind", "generic")
+        except Exception:
+            kind_guess = "generic"
+        classifier_hits[kind_guess] = classifier_hits.get(kind_guess, 0) + 1
+
+        # Numeric snapshot per sheet (cap to avoid huge payloads)
+        numeric_cols: dict[str, dict] = {}
+        for c in list(df.columns)[:30]:
+            vals = [_to_number(v) for v in df[c].tolist()]
+            vals = [v for v in vals if v is not None]
+            if len(vals) >= 3:
+                numeric_cols[c] = {
+                    "n": len(vals),
+                    "sum": round(sum(vals), 2),
+                    "mean": round(statistics.mean(vals), 2),
+                    "min": round(min(vals), 2),
+                    "max": round(max(vals), 2),
+                }
+
+        # Detect year-headed projection tables
+        years_in_header = sorted({m.group(0) for c in df.columns for m in [year_pattern.search(str(c))] if m})
+        # Sample first 3 non-empty cells to give the LLM textual context
+        sample_cells: list[str] = []
+        for _, row in df.head(8).iterrows():
+            for v in row.tolist():
+                if isinstance(v, str) and v.strip() and len(sample_cells) < 12:
+                    sample_cells.append(v.strip()[:80])
+
+        sheet_summaries.append({
+            "sheet": sname,
+            "rows": int(len(df)),
+            "columns": list(df.columns)[:30],
+            "years_in_header": years_in_header,
+            "numeric_columns": numeric_cols,
+            "sample_text": sample_cells,
+            "kind_guess": kind_guess,
+        })
+
+    # Workbook-level kind decision
+    joined_text = (" ".join(s.get("sheet", "") for s in sheet_summaries) + " "
+                   + " ".join(" ".join(s.get("sample_text") or []) for s in sheet_summaries)).lower()
+    fin_hits = sum(1 for k in fin_keywords if k in joined_text)
+    has_year_projections = sum(1 for s in sheet_summaries if len(s.get("years_in_header") or []) >= 2)
+
+    if (len(sheet_summaries) >= 4 and (fin_hits >= 3 or has_year_projections >= 2)):
+        kind = "financial_model"
+    else:
+        # If the largest sheet matches a specific kind, promote that
+        kind = max(classifier_hits, key=classifier_hits.get) if classifier_hits else "generic"
+
+    # Headline metrics for financial models
+    headline: dict[str, Any] = {}
+    if kind == "financial_model":
+        # Pull the largest numeric sums across all sheets, label by sheet/column
+        flat: list[tuple[str, str, float]] = []
+        for s in sheet_summaries:
+            for col, stat in (s.get("numeric_columns") or {}).items():
+                flat.append((s["sheet"], col, float(stat.get("sum") or 0)))
+        flat.sort(key=lambda t: abs(t[2]), reverse=True)
+        headline["largest_numeric_aggregates"] = [
+            {"sheet": s, "column": c, "sum": round(v, 2)} for s, c, v in flat[:10]
+        ]
+        headline["sheet_count"] = len(sheet_summaries)
+        headline["projection_sheets"] = [s["sheet"] for s in sheet_summaries if s.get("years_in_header")]
+        headline["detected_keywords"] = [k for k in fin_keywords if k in joined_text][:12]
+
+    return {
+        "kind": kind,
+        "sheets": [s["sheet"] for s in sheet_summaries],
+        "sheet_count": len(sheet_summaries),
+        "per_sheet": sheet_summaries,
+        "headline": headline,
+        "source": path.name,
+    }
 
 
 def _parse_pdf(path: Path) -> dict:
